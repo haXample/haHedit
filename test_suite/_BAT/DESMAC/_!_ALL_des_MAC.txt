@@ -1,1 +1,52 @@
+//----------------------------------------------------------------------------
+//
+//                 DesAlgorithmMac (CMAC NIST SP 800-38B)
+//
+// First step:  Two subkeys K1, K2 are generated from the key K.
+// Second step: The input message is formatted into a sequence of complete blocks
+//              in which the final block has been masked by a subkey.
+// 
+// There are two cases:
+// If the message length is a positive multiple of the block size,
+//  then the message is partitioned into complete blocks.
+//  The final block is masked with the first subkey; in other words,
+//  the final block in the partition is replaced
+//  with the exclusive-OR of the final block with the FIRST subkey K1.
+//  The resulting sequence of blocks is the formatted message
+//  (no additional ISO Padding is applied).
+// 
+// If the message length is not a positive multiple of the block size,
+//  then the message is partitioned into complete blocks
+//  to the greatest extent possible, i.e., into a sequence of complete blocks
+//  followed by a final bit string whose length is less than the block size.
+//  A padding string is appended to this final bit string,
+//  in particular, a single ‘1’ bit followed by the minimum number of ‘0’ bits,
+//  possibly none, that are necessary to form a complete block (= ISO Padding).
+//  The complete final block is masked, with the SECOND subkey K2.
+//  The resulting sequence of blocks is the formatted message.
+//
+  // Generating the subkeys K1 and K2
+  //	
+  //  Example:
+  //  Block cipher is the DES algorithm:
+  //    Key =        8aa83bf8 cbda1062
+  //
+  //  Subkey K1, K2 Generation
+  //    CIPHK(064) = DA FF D1 15 C4 DC F5 3E
+  //    K1 =         85 FF A2 2B 89 B9 EA 67
+  //    K2 =         6B FF 44 57 13 73 D4 D5
+  //
+  // Example Mlen = 64:
+  //    M =          6bc1bee2 2e409f96
+  //    T =          20 37 34 C0 22 B2 26 C8
+  //
+  // Example Mlen = 160:
+  //    M =          6bc1bee2 2e409f96 e93d7e11 7393172a
+  //                 ae2d8a57
+  //    T =          E3 A8 DD 10 1A 7B CB B5
+  //
+  // Example Mlen = 256:
+  //    M =          6bc1bee2 2e409f96 e93d7e11 7393172a
+  //                 ae2d8a57 1e03ac9c 9eb76fac 45af8e51
+  //    T =          59 EB 8D B9 78 9D AF C7
 
