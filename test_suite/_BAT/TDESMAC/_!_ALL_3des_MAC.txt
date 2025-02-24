@@ -1,1 +1,81 @@
+//----------------------------------------------------------------------------
+//
+//                 TdesAlgorithmMac (CMAC NIST SP 800-38B)
+//
+// First step:  Two subkeys K1, K2 are generated from the key K.
+// Second step: The input message is formatted into a sequence of complete blocks
+//              in which the final block has been masked by a subkey.
+// 
+// There are two cases:
+// If the message length is a positive multiple of the block size,
+//  then the message is partitioned into complete blocks.
+//  The final block is masked with the first subkey; in other words,
+//  the final block in the partition is replaced
+//  with the exclusive-OR of the final block with the FIRST subkey K1.
+//  The resulting sequence of blocks is the formatted message
+//  (no additional ISO Padding is applied).
+// 
+// If the message length is not a positive multiple of the block size,
+//  then the message is partitioned into complete blocks
+//  to the greatest extent possible, i.e., into a sequence of complete blocks
+//  followed by a final bit string whose length is less than the block size.
+//  A padding string is appended to this final bit string,
+//  in particular, a single ‘1’ bit followed by the minimum number of ‘0’ bits,
+//  possibly none, that are necessary to form a complete block (= ISO Padding).
+//  The complete final block is masked, with the SECOND subkey K2.
+//  The resulting sequence of blocks is the formatted message.
+// 
+  // TDES (3DES, TDEA)
+  // Generating the subkeys K1 and K2
+  //	
+  //  Example 1:
+  //  Block cipher is the TDES algorithm (Three Key TDEA):
+  //    Key1 =       8aa83bf8 cbda1062
+  //    Key2 =       0bc1bf19 fbb6cd58
+  //    Key3 =       bc313d4a 371ca8b5	
+  //
+  //  Subkey K1, K2 Generation
+  //    CIPHK(064) = C8 CC 74 E9 8A 73 29 A2	ok
+  //    K1 =         91 98 E9 D3 14 E6 53 5F	ok
+  //    K2 =         23 31 D3 A6 29 CC A6 A5	ok
+  //
+  // Example Mlen = 64:
+  //    M =          6bc1bee2 2e409f96
+  //    T =          b7a688e1 22ffaf95	 ==>	 8E 8F 29 31 36 28 37 97 
+  //
+  // Example Mlen = 160:
+  //    M =          6bc1bee2 2e409f96 e93d7e11 7393172a
+  //                 ae2d8a57
+  //    T =	     d32bcebe 43d23d80	 ==>	 74 3D DB E0 CE 2D C2 ED
+  //
+  // Example Mlen = 256:
+  //    M =          6bc1bee2 2e409f96 e93d7e11 7393172a
+  //                 ae2d8a57 1e03ac9c 9eb76fac 45af8e51
+  //    T =          33e6b109 2400eae5	 ==>	 33 E6 B1 09 24 00 EA E5
+  //
 
+  //  Example 2:
+  //  Block cipher is the TDES algorithm (Two Key TDEA):
+  //    Key1 =       4cf15134 a2850dd5
+  //    Key2 =       8a3d10ba 80570d38
+  //    Key3 =       4cf15134 a2850dd5	
+  //
+  //  Subkey K1, K2 Generation
+  //    CIPHK(064) = C7 67 9B 9F 6B 8D 7D 7A	ok
+  //    K1 =         8E CF 37 3E D7 1A FA EF	ok
+  //    K2 =         1D 9E 6E 7D AE 35 F5 C5	ok
+  //
+  // Example Mlen = 64:
+  //    M =          6bc1bee2 2e409f96
+  //    T =          bd2ebf9a 3ba00361	 ==>	 4F F2 AB 81 3C 53 CE 83
+  //
+  // Example Mlen = 160:
+  //    M =          6bc1bee2 2e409f96 e93d7e11 7393172a
+  //                 ae2d8a57
+  //    T =	     8ea92435 b52660e0	 ==>	 62 DD 1B 47 19 02 BD 4E
+  //
+  // Example Mlen = 256:
+  //    M =          6bc1bee2 2e409f96 e93d7e11 7393172a
+  //                 ae2d8a57 1e03ac9c 9eb76fac 45af8e51
+  //    T =          31b1e431 dabc4eb8	 ==>     31 B1 E4 31 DA BC 4E B8  ok 
+  
