@@ -1,1 +1,96 @@
+TDES (3DES) TEST - REFERENCE DATA output from Console application = {TDES.EXE V2.00}
+------------------------------------------------------------------------------------
+Key/IV for encryption:
+ 3DES-Key = 1234567890123456ABCDEFGH (192-bit -> 168-bit effective length)
+ 3DES-IV  = 23456789
 
+Plain text:
+ FOX_RAW.TXT: The quick brown fox jumped over the lazy dog
+ FOX_PAD.TXT: The quick brown fox jumped over the lazy dog
+------------------------------------------------------------------------------------
+
+1) FOX_RAW.TXT /ECBENCRYPT  [*.E--] [*.3_e]
+13 D4 D3 54 94 93 D2 87 0F 93 C3 E0 81 2A 06 DE 
+46 7E 1F 9C 0B FB 16 C0 70 ED E5 CA BB D3 CA 62 
+23 1D FF 15 DB A6 41 3D F2 17 A7 AE 
+
+ÔÓT”“Ò‡“Ãà*ÞF~œûÀpíåÊ»ÓÊb#ÿÛ¦A=ò§®
+
+2) FOX_PAD.TXT /ECBENCRYPT  [*.E-] [*.3_e]
+13 D4 D3 54 94 93 D2 87 0F 93 C3 E0 81 2A 06 DE 
+46 7E 1F 9C 0B FB 16 C0 70 ED E5 CA BB D3 CA 62 
+F2 17 A7 AE 8D 47 F2 C7 19 8F F3 91 62 EC EC 94
+
+ÔÓT”“Ò‡“Ãà*ÞF~œûÀpíåÊ»ÓÊbò§®GòÇó‘bìì”
+
+3) FOX_RAW.TXT /ECBE (ISO Padding)  [*.E-+] [*.3°e]
+13 D4 D3 54 94 93 D2 87 0F 93 C3 E0 81 2A 06 DE 
+46 7E 1F 9C 0B FB 16 C0 70 ED E5 CA BB D3 CA 62 
+F2 17 A7 AE 8D 47 F2 C7 3E 1C 92 6E 78 CA 33 54 
+
+ÔÓT”“Ò‡“Ãà*ÞF~œûÀpíåÊ»ÓÊbò§®GòÇ>’nxÊ3T
+
+/ECBDECIPHER (verify ISO Padding: ECB)
+54 68 65 20 71 75 69 63 6B 20 62 72 6F 77 6E 20 
+66 6F 78 20 6A 75 6D 70 65 64 20 6F 76 65 72 20 
+74 68 65 20 6C 61 7A 79 20 64 6F 67 80 00 00 00 
+The quick brown fox jumped over the lazy dog€
+
+4) FOX_PAD.TXT /ECBE (ISO Padding: ECB) [*.E-=] [*.3°e]
+13 D4 D3 54 94 93 D2 87 0F 93 C3 E0 81 2A 06 DE 
+46 7E 1F 9C 0B FB 16 C0 70 ED E5 CA BB D3 CA 62 
+F2 17 A7 AE 8D 47 F2 C7 19 8F F3 91 62 EC EC 94 
+B7 FC CD 94 01 75 AE 56
+
+ÔÓT”“Ò‡“Ãà*ÞF~œûÀpíåÊ»ÓÊbò§®GòÇó‘bìì”·üÍ”u®V
+
+/ECBDECIPHER (verify ISO Padding)
+54 68 65 20 71 75 69 63 6B 20 62 72 6F 77 6E 20
+66 6F 78 20 6A 75 6D 70 65 64 20 6F 76 65 72 20 
+74 68 65 20 6C 61 7A 79 20 64 6F 67 04 04 04 04 
+80 00 00 00 00 00 00 00 
+The quick brown fox jumped over the lazy dog€
+-------------------------------------------------
+
+5) FOX_RAW.TXT /ENCRYPT (CBC + IV)  [*.E#-] [*.3~e]
+5B F2 96 57 E6 06 4E B9 9E 52 AC C8 E3 A6 80 8A 
+76 1A 86 A7 EE 85 C2 5C 32 70 22 C3 0D 93 9D 3A 
+B4 EE EB AD AB 9C 05 3C 8A 41 A9 CD 
+
+[ò–WæN¹žR¬Èã¦€Šv†§î…Â\2p"Ã“:´îë­«œ<ŠA©Í
+
+6) FOX_PAD.TXT /ENCRYPT (CBC + IV)  [*.E#] [*.3~e]
+5B F2 96 57 E6 06 4E B9 9E 52 AC C8 E3 A6 80 8A 
+76 1A 86 A7 EE 85 C2 5C 32 70 22 C3 0D 93 9D 3A 
+8A 41 A9 CD 42 68 9A A4 48 1F F2 01 55 81 6A 8C
+
+[ò–WæN¹žR¬Èã¦€Šv†§î…Â\2p"Ã“:ŠA©ÍBhš¤HòUjŒ
+
+7) FOX_RAW.TXT /CBCE (ISO Padding: CBC + IV)  [*.E#+] [*.3°e]
+5B F2 96 57 E6 06 4E B9 9E 52 AC C8 E3 A6 80 8A 
+76 1A 86 A7 EE 85 C2 5C 32 70 22 C3 0D 93 9D 3A 
+8A 41 A9 CD 42 68 9A A4 D1 37 7E A0 96 65 62 AD 
+
+[ò–WæN¹žR¬Èã¦€Šv†§î…Â\2p"Ã“:ŠA©ÍBhš¤Ñ7~ –eb­
+
+/ECBDECIPHER (verify ISO Padding: ECB)
+54 68 65 20 71 75 69 63 6B 20 62 72 6F 77 6E 20 
+66 6F 78 20 6A 75 6D 70 65 64 20 6F 76 65 72 20 
+74 68 65 20 6C 61 7A 79 20 64 6F 67 80 00 00 00 
+The quick brown fox jumped over the lazy dog€
+
+8) FOX_PAD.TXT /CBCE (ISO Padding: CBC + IV)  [*.E#=] [*.3°e]
+5B F2 96 57 E6 06 4E B9 9E 52 AC C8 E3 A6 80 8A 
+76 1A 86 A7 EE 85 C2 5C 32 70 22 C3 0D 93 9D 3A 
+8A 41 A9 CD 42 68 9A A4 48 1F F2 01 55 81 6A 8C 
+BF 14 17 F3 CA 94 6E D9  
+
+[ò–WæN¹žR¬Èã¦€Šv†§î…Â\2p"Ã“:ŠA©ÍBhš¤HòUjŒ¿óÊ”nÙ
+
+/ECBDECIPHER (verify ISO Padding)
+54 68 65 20 71 75 69 63 6B 20 62 72 6F 77 6E 20 
+66 6F 78 20 6A 75 6D 70 65 64 20 6F 76 65 72 20 
+74 68 65 20 6C 61 7A 79 20 64 6F 67 04 04 04 04 
+80 00 00 00 00 00 00 00 
+The quick brown fox jumped over the lazy dog€
+-------------------------------------------------
