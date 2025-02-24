@@ -1,0 +1,1579 @@
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 1 - 1
+
+
+				;; desfast.asm - MASM Developer	source file for	DES.
+				;; (c)2021 by helmut altmann
+
+				;; This	program	is free	software; you can redistribute it and/or modify
+				;; it under the	terms of the GNU General Public	License	as published by
+				;; the Free Software Foundation; either	version	2 of the License, or
+				;; (at your option) any	later version.
+				;;
+				;; This	program	is distributed in the hope that	it will	be useful,
+				;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+				;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the
+				;; GNU General Public License for more details.
+				;;
+				;; You should have received a copy of the GNU General Public License
+				;; along with this program; see	the file COPYING.  If not, write to
+				;; the Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+				;; Boston, MA 02111-1307, USA.
+				 
+				.MODEL FLAT
+				.686P			; All latest Intel CPUs	(won't run on older PCs)
+				.XMM			; All latest Intel CPUs	(won't run on older PCs)
+
+				;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+				;;									     ;;
+				;; MS Visual C++ specific memset() prototype				     ;;
+				;; It is defined in <cstring> header file.				     ;;
+				;;  void* memset(void* dest, int ch, size_t count);			     ;;
+				;;									     ;;
+				;;memset PROTO C, dest:DWORD, char:DWORD, count:DWORD ;	= EXTRN	_memset:PROC ;;
+				;;									     ;;
+				;; MS Visual C++ specific memset() prototype				     ;;
+				;; It is defined in <cstring> header file.				     ;;
+				;;  void* memset(void* dest, int ch, size_t count);			     ;;
+				;;									     ;;
+				;; memset() Parameters							     ;;
+				;;    dest: Pointer to the object to copy the character.		     ;;
+				;;    ch: The character	to copy.					     ;;
+				;;    count: Number of times to	copy.					     ;;
+				;;									     ;;
+				;; memset() Return value						     ;;
+				;; The memset()	function returns dest, a pointer to the	destination string.  ;;
+				;;									     ;;
+				;; The memset()	function takes three arguments;	 dest, ch and count.	     ;;
+				;;  The	character represented by ch is first converted to unsigned char	     ;;
+				;;   and then copies it	into the first count characters			     ;;
+				;;    of the object pointed to by dest.					     ;;
+				;;									     ;;
+				;; Example C++:								     ;;
+				;;									     ;;
+				;;#include <cstring>							     ;;
+				;;#include <iostream>							     ;;
+				;;									     ;;
+				;;using	namespace std;							     ;;
+				;;									     ;;
+				;;int main()								     ;;
+				;;{									     ;;
+				;;    char dest[50];							     ;;
+				;;    char ch =	'a';							     ;;
+				;;    mmset(dest, ch, 20);						     ;;
+				;;									     ;;
+				;;    cout << "After calling memset" <<	endl;				     ;;
+				;;    cout << "dest contains " << dest;					     ;;
+				;;    return 0;								     ;;
+				;;}									     ;;
+				;; When	you run	the program, the output	will be:			     ;;
+				;;  After calling memset						     ;;
+				;;  dest contains aaaaaaaaaaaaaaaaaaaa					     ;;
+				;;									     ;;
+				;; cdecl convention; params pushed on stack right to left		     ;;
+				;;									     ;;
+				;;;;;;;;;; MS Visual C++ specific "_memset" Parameters:			     ;;
+					;; param 3 = count				= push BLOCK_SIZE    ;;
+					;; param 2 = (unsigned char)(0)	to be copied	= push 0	     ;;
+				;;;;;;;;;; param 1 = destination (outblock)		= push eax	     ;;
+				;;									     ;;
+				;;	INVOKE memset, eax, 0, BLOCK_SIZE  ; permute			     ;;
+				;;	INVOKE memset, ecx, 0, eax	   ; desalgorithm		     ;;
+				;;									     ;;
+				;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 2 - 1
+
+
+				;;
+				;; The PERMUTATION_48BIT_BLOCK macro supports the definition of	the permuted
+				;; choice tables. It transforms	the notation described in the DES specs	into
+				;; the convention expected by this algorithm. Its purpose is mainatin legibility.
+				;;
+				PERMUTATION_48BIT_BLOCK	MACRO b1, b2, b3, b4, b5, b6
+				  DB b1;-1
+				  DB b2;-1
+				  DB b3;-1
+				  DB b4;-1
+				  DB b5;-1
+				  DB b6;-1
+				  ENDM
+
+				PERMUTATION_56BIT_BLOCK	MACRO b1, b2, b3, b4, b5, b6, b7
+				  DB b1;-1
+				  DB b2;-1
+				  DB b3;-1
+				  DB b4;-1
+				  DB b5;-1
+				  DB b6;-1
+				  DB b7;-1
+				  ENDM
+				;
+				; Supported DES	Algorithm Modes
+				;
+ = 00000000			ENCRYPT		EQU	0	; Encrypts a block of plain text (see desmain.cpp)
+ = 00000001			DECIPHER	EQU	1	; Deciphers a block of encrypted text  (see desmain.cpp)
+
+ = 00000005			CPU586		EQU	5	; Family ID for	Pentium	(no 'cmov' instructions	support)
+ = 00000006			CPU686		EQU	6	; Family ID for	Pentium	Pro and	later
+
+ 00000000			_DATA SEGMENT
+					ORG $+4	; align
+
+				;------------------------------------------------------------------------------
+				;	DES Substitution Boxes
+				;
+				; The table is organized just as described in the common DES documentations.
+				; It is	very easy to survey and	understand.
+				;
+				; The SBoxTable	is accessed by a 6-bit index:
+				;
+				;	[ *  *	r1 c3 c2 c1 c0 r0 ]
+				;
+				;	 Bits r1r0 = [5,0] select one of 4 rows	in a box
+				;	 Bits c3..c0 = [4:1] select one	of 16 colums in	a box
+				;
+				;	Within a loop all eight	S-Boxes	are consulted for DES substitution.
+				;
+				;	Depending on the selection either the lsb or the msb from the
+				;	table value (column) is	used for substitution (see DES specification).
+				;
+ 00000004			SBoxTable:
+				;
+				; S[1]	   c0	  c1	 c2	 c3	c4    c5     c6	    c7	   c8	  c9	 cA	cB     cC     cD     cE	    cF
+				;
+ 00000004			SBox1 LABEL BYTE ; SHL 4
+ 00000004  E0 40 D0 10 20	     DB	  14*16,  4*16,	13*16,	1*16,  2*16, 15*16, 11*16,  8*16,  3*16, 10*16,	 6*16, 12*16,  5*16,  9*16,  0*16,  7*16   ; r0
+	   F0 B0 80 30 A0
+	   60 C0 50 90 00
+	   70
+ 00000014  00 F0 70 40 E0	     DB	   0*16, 15*16,	 7*16,	4*16, 14*16,  2*16, 13*16,  1*16, 10*16,  6*16,	12*16, 11*16,  9*16,  5*16,  3*16,  8*16   ; r1
+	   20 D0 10 A0 60
+	   C0 B0 90 50 30
+	   80
+ 00000024  40 10 E0 80 D0	     DB	   4*16,  1*16,	14*16,	8*16, 13*16,  6*16,  2*16, 11*16, 15*16, 12*16,	 9*16,	7*16,  3*16, 10*16,  5*16,  0*16   ; r2
+	   60 20 B0 F0 C0
+	   90 70 30 A0 50
+	   00
+ 00000034  F0 C0 80 20 40	     DB	  15*16, 12*16,	 8*16,	2*16,  4*16,  9*16,  1*16,  7*16,  5*16, 11*16,	 3*16, 14*16, 10*16,  0*16,  6*16, 13*16   ; r3
+	   90 10 70 50 B0
+	   30 E0 A0 00 60
+	   D0
+ 00000044 = 00000040		SBOX_SIZE EQU $-SBox1 ;	All S-boxes have the same size
+
+				;
+				; S[2]	  c0  c1  c2  c3  c4  c5  c6  c7  c8  c9  cA  cB  cC  cD  cE  cF
+				;
+ 00000044			SBox2 LABEL BYTE ; !! SHL 0 no shift left !!
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 3 - 1
+
+
+ 00000044  0F 01 08 0E 06	     DB	  15,  1,  8, 14,  6, 11,  3,  4,  9,  7,  2, 13, 12,  0,  5, 10  ; r0
+	   0B 03 04 09 07
+	   02 0D 0C 00 05
+	   0A
+ 00000054  03 0D 04 07 0F	     DB	   3, 13,  4,  7, 15,  2,  8, 14, 12,  0,  1, 10,  6,  9, 11,  5  ; r1
+	   02 08 0E 0C 00
+	   01 0A 06 09 0B
+	   05
+ 00000064  00 0E 07 0B 0A	     DB	   0, 14,  7, 11, 10,  4, 13,  1,  5,  8, 12,  6,  9,  3,  2, 15  ; r2
+	   04 0D 01 05 08
+	   0C 06 09 03 02
+	   0F
+ 00000074  0D 08 0A 01 03	     DB	  13,  8, 10,  1,  3, 15,  4,  2, 11,  6,  7, 12,  0,  5, 14,  9  ; r3
+	   0F 04 02 0B 06
+	   07 0C 00 05 0E
+	   09
+
+				;
+				; S[3]
+				;
+ 00000084			SBox3 LABEL BYTE ; SHL 4
+ 00000084  A0 00 90 E0 60	     DB	  10*16,  0*16,	 9*16, 14*16,  6*16,  3*16, 15*16,  5*16,  1*16, 13*16,	12*16,	7*16, 11*16,  4*16,  2*16,  8*16   ; r0
+	   30 F0 50 10 D0
+	   C0 70 B0 40 20
+	   80
+ 00000094  D0 70 00 90 30	     DB	  13*16,  7*16,	 0*16,	9*16,  3*16,  4*16,  6*16, 10*16,  2*16,  8*16,	 5*16, 14*16, 12*16, 11*16, 15*16,  1*16   ; r1
+	   40 60 A0 20 80
+	   50 E0 C0 B0 F0
+	   10
+ 000000A4  D0 60 40 90 80	     DB	  13*16,  6*16,	 4*16,	9*16,  8*16, 15*16,  3*16,  0*16, 11*16,  1*16,	 2*16, 12*16,  5*16, 10*16, 14*16,  7*16   ; r2
+	   F0 30 00 B0 10
+	   20 C0 50 A0 E0
+	   70
+ 000000B4  10 A0 D0 00 60	     DB	   1*16, 10*16,	13*16,	0*16,  6*16,  9*16,  8*16,  7*16,  4*16, 15*16,	14*16,	3*16, 11*16,  5*16,  2*16, 12*16   ; r3
+	   90 80 70 40 F0
+	   E0 30 B0 50 20
+	   C0
+
+				;
+				; S[4]
+				;
+ 000000C4			SBox4 LABEL BYTE ; !! SHL 0 no shift left !!
+ 000000C4  07 0D 0E 03 00	     DB	   7, 13, 14,  3,  0,  6,  9, 10,  1,  2,  8,  5, 11, 12,  4, 15  ; r0
+	   06 09 0A 01 02
+	   08 05 0B 0C 04
+	   0F
+ 000000D4  0D 08 0B 05 06	     DB	  13,  8, 11,  5,  6, 15,  0,  3,  4,  7,  2, 12,  1, 10, 14,  9  ; r1
+	   0F 00 03 04 07
+	   02 0C 01 0A 0E
+	   09
+ 000000E4  0A 06 09 00 0C	     DB	  10,  6,  9,  0, 12, 11,  7, 13, 15,  1,  3, 14,  5,  2,  8,  4  ; r2
+	   0B 07 0D 0F 01
+	   03 0E 05 02 08
+	   04
+ 000000F4  03 0F 00 06 0A	     DB	   3, 15,  0,  6, 10,  1, 13,  8,  9,  4,  5, 11, 12,  7,  2, 14  ; r3
+	   01 0D 08 09 04
+	   05 0B 0C 07 02
+	   0E
+
+				;
+				; S[5]
+				;
+ 00000104			SBox5 LABEL BYTE ; SHL 4
+ 00000104  20 C0 40 10 70	     DB	   2*16, 12*16,	 4*16,	1*16,  7*16, 10*16, 11*16,  6*16,  8*16,  5*16,	 3*16, 15*16, 13*16,  0*16, 14*16,  9*16  ; r0
+	   A0 B0 60 80 50
+	   30 F0 D0 00 E0
+	   90
+ 00000114  E0 B0 20 C0 40	     DB	  14*16, 11*16,	 2*16, 12*16,  4*16,  7*16, 13*16,  1*16,  5*16,  0*16,	15*16, 10*16,  3*16,  9*16,  8*16,  6*16  ; r1
+	   70 D0 10 50 00
+	   F0 A0 30 90 80
+	   60
+ 00000124  40 20 10 B0 A0	     DB	   4*16,  2*16,	 1*16, 11*16, 10*16, 13*16,  7*16,  8*16, 15*16,  9*16,	12*16,	5*16,  6*16,  3*16,  0*16, 14*16  ; r2
+	   D0 70 80 F0 90
+	   C0 50 60 30 00
+	   E0
+ 00000134  B0 80 C0 70 10	     DB	  11*16,  8*16,	12*16,	7*16,  1*16, 14*16,  2*16, 13*16,  6*16, 15*16,	 0*16,	9*16, 10*16,  4*16,  5*16,  3*16  ; r3
+	   E0 20 D0 60 F0
+	   00 90 A0 40 50
+	   30
+
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 4 - 1
+
+
+				;
+				; S[6]
+				;
+ 00000144			SBox6 LABEL BYTE ; !! SHL 0 no shift left !!
+ 00000144  0C 01 0A 0F 09	     DB	  12,  1, 10, 15,  9,  2,  6,  8,  0, 13,  3,  4, 14,  7,  5, 11  ; r0
+	   02 06 08 00 0D
+	   03 04 0E 07 05
+	   0B
+ 00000154  0A 0F 04 02 07	     DB	  10, 15,  4,  2,  7, 12,  9,  5,  6,  1, 13, 14,  0, 11,  3,  8  ; r1
+	   0C 09 05 06 01
+	   0D 0E 00 0B 03
+	   08
+ 00000164  09 0E 0F 05 02	     DB	   9, 14, 15,  5,  2,  8, 12,  3,  7,  0,  4, 10,  1, 13, 11,  6  ; r2
+	   08 0C 03 07 00
+	   04 0A 01 0D 0B
+	   06
+ 00000174  04 03 02 0C 09	     DB	   4,  3,  2, 12,  9,  5, 15, 10, 11, 14,  1,  7,  6,  0,  8, 13  ; r3
+	   05 0F 0A 0B 0E
+	   01 07 06 00 08
+	   0D
+
+				;
+				; S[7]
+				;
+ 00000184			SBox7 LABEL BYTE ; SHL 4
+ 00000184  40 B0 20 E0 F0	     DB	   4*16, 11*16,	 2*16, 14*16, 15*16,  0*16,  8*16, 13*16,  3*16, 12*16,	 9*16,	7*16,  5*16, 10*16,  6*16,  1*16  ; r0
+	   00 80 D0 30 C0
+	   90 70 50 A0 60
+	   10
+ 00000194  D0 00 B0 70 40	     DB	  13*16,  0*16,	11*16,	7*16,  4*16,  9*16,  1*16, 10*16, 14*16,  3*16,	 5*16, 12*16,  2*16, 15*16,  8*16,  6*16  ; r1
+	   90 10 A0 E0 30
+	   50 C0 20 F0 80
+	   60
+ 000001A4  10 40 B0 D0 C0	     DB	   1*16,  4*16,	11*16, 13*16, 12*16,  3*16,  7*16, 14*16, 10*16, 15*16,	 6*16,	8*16,  0*16,  5*16,  9*16,  2*16  ; r2
+	   30 70 E0 A0 F0
+	   60 80 00 50 90
+	   20
+ 000001B4  60 B0 D0 80 10	     DB	   6*16, 11*16,	13*16,	8*16,  1*16,  4*16, 10*16,  7*16,  9*16,  5*16,	 0*16, 15*16, 14*16,  2*16,  3*16, 12*16  ; r3
+	   40 A0 70 90 50
+	   00 F0 E0 20 30
+	   C0
+
+				;
+				; S[8]
+				;
+ 000001C4			SBox8 LABEL BYTE ; !! SHL 0 no shift left !!
+ 000001C4  0D 02 08 04 06	     DB	  13,  2,  8,  4,  6, 15, 11,  1, 10,  9,  3, 14,  5,  0, 12,  7  ; r0
+	   0F 0B 01 0A 09
+	   03 0E 05 00 0C
+	   07
+ 000001D4  01 0F 0D 08 0A	     DB	  01, 15, 13,  8, 10,  3,  7,  4, 12,  5,  6, 11,  0, 14,  9,  2  ; r1
+	   03 07 04 0C 05
+	   06 0B 00 0E 09
+	   02
+ 000001E4  07 0B 04 01 09	     DB	  07, 11,  4,  1,  9, 12, 14,  2,  0,  6, 10, 13, 15,  3,  5,  8  ; r2
+	   0C 0E 02 00 06
+	   0A 0D 0F 03 05
+	   08
+ 000001F4  02 01 0E 07 04	     DB	  02,  1, 14,  7,  4, 10,  8, 13, 15, 12,  9,  0,  3,  5,  6, 11  ; r3
+	   0A 08 0D 0F 0C
+	   09 00 03 05 06
+	   0B
+
+
+				;------------------------------------------------------------------------------
+				;
+ 00000204			PermutationPC2 LABEL BYTE
+					PERMUTATION_48BIT_BLOCK		13, 16,	10, 23,	 0,  4
+ 00000204  0D		     1	  DB 13;-1
+ 00000205  10		     1	  DB 16;-1
+ 00000206  0A		     1	  DB 10;-1
+ 00000207  17		     1	  DB 23;-1
+ 00000208  00		     1	  DB 0;-1
+ 00000209  04		     1	  DB 4;-1
+					PERMUTATION_48BIT_BLOCK		 2, 27,	14,  5,	20,  9
+ 0000020A  02		     1	  DB 2;-1
+ 0000020B  1B		     1	  DB 27;-1
+ 0000020C  0E		     1	  DB 14;-1
+ 0000020D  05		     1	  DB 5;-1
+ 0000020E  14		     1	  DB 20;-1
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 5 - 1
+
+
+ 0000020F  09		     1	  DB 9;-1
+					PERMUTATION_48BIT_BLOCK		22, 18,	11,  3,	25,  7
+ 00000210  16		     1	  DB 22;-1
+ 00000211  12		     1	  DB 18;-1
+ 00000212  0B		     1	  DB 11;-1
+ 00000213  03		     1	  DB 3;-1
+ 00000214  19		     1	  DB 25;-1
+ 00000215  07		     1	  DB 7;-1
+					PERMUTATION_48BIT_BLOCK		15,  6,	26, 19,	12,  1
+ 00000216  0F		     1	  DB 15;-1
+ 00000217  06		     1	  DB 6;-1
+ 00000218  1A		     1	  DB 26;-1
+ 00000219  13		     1	  DB 19;-1
+ 0000021A  0C		     1	  DB 12;-1
+ 0000021B  01		     1	  DB 1;-1
+					PERMUTATION_48BIT_BLOCK		40, 51,	30, 36,	46, 54
+ 0000021C  28		     1	  DB 40;-1
+ 0000021D  33		     1	  DB 51;-1
+ 0000021E  1E		     1	  DB 30;-1
+ 0000021F  24		     1	  DB 36;-1
+ 00000220  2E		     1	  DB 46;-1
+ 00000221  36		     1	  DB 54;-1
+					PERMUTATION_48BIT_BLOCK		29, 39,	50, 44,	32, 47
+ 00000222  1D		     1	  DB 29;-1
+ 00000223  27		     1	  DB 39;-1
+ 00000224  32		     1	  DB 50;-1
+ 00000225  2C		     1	  DB 44;-1
+ 00000226  20		     1	  DB 32;-1
+ 00000227  2F		     1	  DB 47;-1
+					PERMUTATION_48BIT_BLOCK		43, 48,	38, 55,	33, 52
+ 00000228  2B		     1	  DB 43;-1
+ 00000229  30		     1	  DB 48;-1
+ 0000022A  26		     1	  DB 38;-1
+ 0000022B  37		     1	  DB 55;-1
+ 0000022C  21		     1	  DB 33;-1
+ 0000022D  34		     1	  DB 52;-1
+					PERMUTATION_48BIT_BLOCK		45, 41,	49, 35,	28, 31
+ 0000022E  2D		     1	  DB 45;-1
+ 0000022F  29		     1	  DB 41;-1
+ 00000230  31		     1	  DB 49;-1
+ 00000231  23		     1	  DB 35;-1
+ 00000232  1C		     1	  DB 28;-1
+ 00000233  1F		     1	  DB 31;-1
+
+ 00000234			PermutationPC1 LABEL BYTE		; Permuted choice table	(key)
+					PERMUTATION_56BIT_BLOCK		56, 48,	40, 32,	24, 16,	 8
+ 00000234  38		     1	  DB 56;-1
+ 00000235  30		     1	  DB 48;-1
+ 00000236  28		     1	  DB 40;-1
+ 00000237  20		     1	  DB 32;-1
+ 00000238  18		     1	  DB 24;-1
+ 00000239  10		     1	  DB 16;-1
+ 0000023A  08		     1	  DB 8;-1
+					PERMUTATION_56BIT_BLOCK		 0, 57,	49, 41,	33, 25,	17
+ 0000023B  00		     1	  DB 0;-1
+ 0000023C  39		     1	  DB 57;-1
+ 0000023D  31		     1	  DB 49;-1
+ 0000023E  29		     1	  DB 41;-1
+ 0000023F  21		     1	  DB 33;-1
+ 00000240  19		     1	  DB 25;-1
+ 00000241  11		     1	  DB 17;-1
+					PERMUTATION_56BIT_BLOCK		 9,  1,	58, 50,	42, 34,	26
+ 00000242  09		     1	  DB 9;-1
+ 00000243  01		     1	  DB 1;-1
+ 00000244  3A		     1	  DB 58;-1
+ 00000245  32		     1	  DB 50;-1
+ 00000246  2A		     1	  DB 42;-1
+ 00000247  22		     1	  DB 34;-1
+ 00000248  1A		     1	  DB 26;-1
+					PERMUTATION_56BIT_BLOCK		18, 10,	 2, 59,	51, 43,	35
+ 00000249  12		     1	  DB 18;-1
+ 0000024A  0A		     1	  DB 10;-1
+ 0000024B  02		     1	  DB 2;-1
+ 0000024C  3B		     1	  DB 59;-1
+ 0000024D  33		     1	  DB 51;-1
+ 0000024E  2B		     1	  DB 43;-1
+ 0000024F  23		     1	  DB 35;-1
+					PERMUTATION_56BIT_BLOCK		62, 54,	46, 38,	30, 22,	14
+ 00000250  3E		     1	  DB 62;-1
+ 00000251  36		     1	  DB 54;-1
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 6 - 1
+
+
+ 00000252  2E		     1	  DB 46;-1
+ 00000253  26		     1	  DB 38;-1
+ 00000254  1E		     1	  DB 30;-1
+ 00000255  16		     1	  DB 22;-1
+ 00000256  0E		     1	  DB 14;-1
+					PERMUTATION_56BIT_BLOCK		 6, 61,	53, 45,	37, 29,	21
+ 00000257  06		     1	  DB 6;-1
+ 00000258  3D		     1	  DB 61;-1
+ 00000259  35		     1	  DB 53;-1
+ 0000025A  2D		     1	  DB 45;-1
+ 0000025B  25		     1	  DB 37;-1
+ 0000025C  1D		     1	  DB 29;-1
+ 0000025D  15		     1	  DB 21;-1
+					PERMUTATION_56BIT_BLOCK		13,  5,	60, 52,	44, 36,	28
+ 0000025E  0D		     1	  DB 13;-1
+ 0000025F  05		     1	  DB 5;-1
+ 00000260  3C		     1	  DB 60;-1
+ 00000261  34		     1	  DB 52;-1
+ 00000262  2C		     1	  DB 44;-1
+ 00000263  24		     1	  DB 36;-1
+ 00000264  1C		     1	  DB 28;-1
+					PERMUTATION_56BIT_BLOCK		20, 12,	 4, 27,	19, 11,	 3
+ 00000265  14		     1	  DB 20;-1
+ 00000266  0C		     1	  DB 12;-1
+ 00000267  04		     1	  DB 4;-1
+ 00000268  1B		     1	  DB 27;-1
+ 00000269  13		     1	  DB 19;-1
+ 0000026A  0B		     1	  DB 11;-1
+ 0000026B  03		     1	  DB 3;-1
+
+
+				;------------------------------------------------------------------------------
+				;
+ 0000026C 00000040		PermutationIP	DD	40h, 10h, 04h, 01h, 80h, 20h, 08h, 02h
+	   00000010
+	   00000004
+	   00000001
+	   00000080
+	   00000020
+	   00000008
+	   00000002
+ 0000028C 00000001		ReferenceIP	DD	01h, 02h, 04h, 08h, 10h, 20h, 40h, 80h
+	   00000002
+	   00000004
+	   00000008
+	   00000010
+	   00000020
+	   00000040
+	   00000080
+
+ 000002AC 18 0F 06 13 14	Permutation48i \
+	   1C 14 1C 0B 1B
+	   10 00 10 00 0E
+	   16 19 04 19 04
+	   11 1E 09 01 09
+	   01 07 17 0D 1F
+	   0D 1F 1A 02 08
+	   12 08 12 0C 1D
+	   05 15 05 15 0A
+	   03 18 0F
+					DB	24, 15,	 6, 19,	20, 28,	20, 28,	11, 27,	16,  0,
+						16,  0,	14, 22,	25,  4,	25,  4,	17, 30,	 9,  1,
+						 9,  1,	 7, 23,	13, 31,	13, 31,	26,  2,	 8, 18,
+						 8, 18,	12, 29,	 5, 21,	 5, 21,	10,  3,	24, 15
+
+
+				;
+				; Note:	Bit 0 is left-most in byte (big-endian)
+				;
+ 000002DC 00000080		NotationTable8Bit \
+	   00000040
+	   00000020
+	   00000010
+	   00000008
+	   00000004
+	   00000002
+	   00000001
+					DD	80h, 40h, 20h, 10h, 08h, 04h, 02h, 01h
+
+ 000002FC 00800000		NotationTable48Bit \
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 7 - 1
+
+
+	   00400000
+	   00200000
+	   00100000
+	   00080000
+	   00040000
+	   00020000
+	   00010000
+	   00008000
+	   00004000
+	   00002000
+	   00001000
+	   00000800
+	   00000400
+	   00000200
+	   00000100
+	   00000080
+	   00000040
+	   00000020
+	   00000010
+	   00000008
+	   00000004
+	   00000002
+	   00000001
+					DD	00800000h, 00400000h, 00200000h, 00100000h,
+						00080000h, 00040000h, 00020000h, 00010000h,
+						00008000h, 00004000h, 00002000h, 00001000h,
+						00000800h, 00000400h, 00000200h, 00000100h,
+						00000080h, 00000040h, 00000020h, 00000010h,
+						00000008h, 00000004h, 00000002h, 00000001h
+ 0000035C = 00000060		NOTATION_48BIT_SIZE EQU	$-NotationTable48Bit
+
+ 0000035C			PC1LeftRotationTable LABEL BYTE			; Number left rotations	of pc1
+ 0000035C  01 02 04 06 08		DB	1, 2, 4, 6, 8, 10, 12, 14, 15, 17, 19, 21, 23, 25, 27, 28
+	   0A 0C 0E 0F 11
+	   13 15 17 19 1B
+	   1C
+				;
+				; Temporary auxiliary pointer (placed at SIZEOF	PermutationArray48a-d +	SIZEOF QWORD)
+				;
+ 0000036C 0000488C R		pfill	DD	FLAT:PermutationArray48a + (4*256*2)+8	 ; =2056		
+ 00000370 00000000		_cmp48x	DD	0
+
+ 00000374 0006			_cpuType DW	6	; .686 = Default  (Performance)
+
+ 00000376			_DATA ENDS
+
+ 00000000			_BSS SEGMENT
+ = 00000008			BLOCK_SIZE	EQU	8			; Size of a DES	plaintext block
+ = 00001000			SBOX_ARRAY_SIZE	EQU	8 * (8*SBOX_SIZE)	; =4096
+
+ 00000000 00000000		IgnitedDES	DD	0			; Init flag
+
+ 00000004  00000020 [		KeyArray	DD	BLOCK_SIZE * SIZEOF DWORD DUP (?)
+	    00000000
+	   ]
+
+ 00000084  00001000 [		SBoxArray12	DB	SBOX_ARRAY_SIZE	DUP (?)	  
+	    00
+	   ]
+ 00001084  00001000 [		SBoxArray34	DB	SBOX_ARRAY_SIZE	DUP (?)	  
+	    00
+	   ]
+ 00002084  00001000 [		SBoxArray56	DB	SBOX_ARRAY_SIZE	DUP (?)	  
+	    00
+	   ]
+ 00003084  00001000 [		SBoxArray78	DB	SBOX_ARRAY_SIZE	DUP (?)	  
+	    00
+	   ]
+
+ 00004084  00000200 [		PermutationArray48a	DD  2*256 DUP (?)
+	    00000000
+	   ]
+ 00004884  00000200 [		PermutationArray48b	DD  2*256 DUP (?)
+	    00000000
+	   ]
+ 00005084  00000200 [		PermutationArray48c	DD  2*256 DUP (?)
+	    00000000
+	   ]
+ 00005884  00000200 [		PermutationArray48d	DD  2*256 DUP (?)
+	    00000000
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 8 - 1
+
+
+	   ]
+
+ 00006084			_BSS ENDS
+
+				;;ha;;_TEXT SEGMENT
+ 00000000			_SMC SEGMENT ; Self-modifying Code (SMC) special section name: _SMC (rd/wr/ex)
+					     ; The linker option is appropriatetly defined in "HEDIT.NMK"
+
+				desKeyInit PROTO C, key:DWORD, edf:DWORD
+
+				desAlgorithm PROTO C, inblock:DWORD, outblock:DWORD
+
+				permute	PROTO C, _inblock:DWORD, PermutationIP:DWORD, ReferenceIP:DWORD, _outblock:DWORD	
+
+
+				;+----------------------------------------------------------------------------
+				;
+				;			 ChkCpuFamily
+				;
+				;   "cpuid" INPUT EAX =	1:
+				;     Version Information Returned by CPUID in EAX 
+				;      and returns Feature Information in ECX and EDX
+				;
+				;   Code instruction requirements for the different CPUs are handled here.
+				;
+				;	 --------------------------
+				;	 Bit#	Information (eax)
+				;	 --------------------------
+				;	 0-3	Stepping ID
+				;	 4-7	Model
+				;	 8-11	Family ID
+				;	 12-13	Processor Type
+				;	 14-15	Reserved
+				;	 16-19	Extended Model ID
+				;	 20-27	Extended Family	ID
+				;	 28-31	Reserved
+				;	 --------------------------
+				;
+				;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ 00000000			kinitCode586a LABEL DWORD		; Code replacement for .586 CPUs in		~
+ 00000000  74 02			je	@F			;  routine kinit, where	cmov Instructions	~
+ 00000002  8B D0			mov	edx, eax		;  are not suppported.				~
+ 00000004			@@:					;						~
+ 00000004			kinitCode586b LABEL DWORD		; Code replacement for .586 CPUs in		~
+ 00000004  72 02			jb	@F			;  routine kinit, where	cmov Instructions	~
+ 00000006  8B CB			mov	ecx, ebx		;  are not suppported.				~
+ 00000008			@@:					;						~
+									;						~
+ 00000008			desAlgoCode586 LABEL DWORD		; Code replacement for .586 CPUs in		~
+ 00000008  75 04			jne	@F			;  routine DesAlgorithm	(no cmov Instructions)	~
+ 0000000A  8B D9			mov	ebx, ecx		; EVN: ebx = _swap				~
+ 0000000C  EB 02			jmp	SHORT desAlgo2a		;						~
+ 0000000E			@@:					;						~
+ 0000000E  8B F9			mov	edi, ecx		; ODD: edi = _swap				~
+ 00000010			desAlgo2a:				;						~
+									;						~
+ 00000010			permuteCode586 LABEL DWORD		; Code replacement for .586 CPUs in		~
+ 00000010  74 02			je	@F			;  routine Permute, where cmov Instructions	~
+ 00000012  8B 08			mov	ecx, DWORD PTR [eax]	;  are not suppported (slower performance)	~
+ 00000014			@@:					;						~
+									;						~
+				;;ha;;_kiniCode586a LABEL DWORD		; Code replacement for .586 CPUs		~
+				;;ha;;	DD	0D08B0274h		; DB 74h,02h,8Bh,0D0h				~
+				;;ha;;_kiniCode586b LABEL DWORD		; Code replacement for .586 CPUs		~
+				;;ha;;	DD	0CB8B0274h		; DB 74h,02h,8Bh,0CBh				~
+				;;ha;;					;						~
+				;;ha;;_desAlgoCode586 LABEL DWORD	; Code replacement for .586 CPUs		~
+				;;ha;;	DD	0D98B0475h		; DB 75h, 04h,8Bh,0D9h				~
+				;;ha;;	DD	0F98B02EBh		; DB 0EBh,02h,8Bh,0F9h				~
+				;;ha;;					;						~
+				;;ha;;_permuteCode586 LABEL DWORD	; Code replacement for .586 CPUs		~
+				;;ha;;	DD	088B0274h		; DB 74h,02h,8Bh,08h				~
+				;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ 00000014			ChkCpuFamily PROC C USES eax ebx ecx edx esi edi
+ 00000014  50		   *	    push   eax
+ 00000015  53		   *	    push   ebx
+ 00000016  51		   *	    push   ecx
+ 00000017  52		   *	    push   edx
+ 00000018  56		   *	    push   esi
+Microsoft (R) Macro Assembler Version 14.28.29910.0 02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 9 - 1
+
+
+ 00000019  57		   *	    push   edi
+ 0000001A  B8 00000001			mov	eax, 1			; CPUID	Input parameter	= 01
+ 0000001F  0F A2			cpuid				;  Get family/model/stepping
+ 00000021  25 00000F00			and	eax, 00000F00h		; Isolate Family [11:08]
+ 00000026  C1 E8 08			shr	eax, 8			; Right	justfy familyID
+ 00000029  66| A3			mov	WORD PTR _cpuType, ax	; Set _cpuType with family
+	   00000374 R
+ 0000002F  66| 83 F8 06			cmp	ax, CPU686		; 'cmov' instructions supported?
+ 00000033  74 35			je	@F			; Yes -	skip and continue.
+
+				;~ Self-Modifying Code:	
+				;~ This	procedure replaces the performant 'cmov' instructions 
+				;~  when running on an older Pentium CPU (FamilyID=5).
+				;~   The replaced code reduces performance by 37%
+				;~    when running on a	Pentium	Pro (FamilyID=6).
+				;~ 
+ 00000035  8D 35 00000000 R		lea	esi, OFFSET kinitCode586a   ;~ kinit PROC
+ 0000003B  8D 3D 0000014B R		lea	edi, OFFSET kinit686a
+ 00000041  A5				movsd
+ 00000042  8D 35 00000004 R		lea	esi, OFFSET kinitCode586b
+ 00000048  8D 3D 00000180 R		lea	edi, OFFSET kinit686b
+ 0000004E  A5				movsd
+
+ 0000004F  8D 35 00000008 R		lea	esi, OFFSET desAlgoCode586  ;~ desAlgorithm PROC
+ 00000055  8D 3D 00000368 R		lea	edi, OFFSET desAlgo686
+ 0000005B  A5				movsd
+ 0000005C  A5				movsd
+
+ 0000005D  8D 35 00000010 R		lea	esi, OFFSET permuteCode586  ;~ permute PROC
+ 00000063  8D 3D 00000429 R		lea	edi, OFFSET permute686
+ 00000069  A5				movsd
+
+ 0000006A			@@:	ret				    ;~ Done.
+ 0000006A  5F		   *	    pop    edi
+ 0000006B  5E		   *	    pop    esi
+ 0000006C  5A		   *	    pop    edx
+ 0000006D  59		   *	    pop    ecx
+ 0000006E  5B		   *	    pop    ebx
+ 0000006F  58		   *	    pop    eax
+ 00000070  C3		   *	    ret    00000h
+ 00000071			ChkCpuFamily ENDP
+
+
+				;+----------------------------------------------------------------------------
+				;
+				;				desKeyInit
+				;
+				;		desKeyInit PROTO C, key:DWORD, edf:DWORD
+				;
+				;	Language type: PROC C (Public interface	to desmain.cpp)
+				;	desmain.cpp: extern "C"	void kinit(char* p, int);
+				;
+				; Initialize key schedule array. Discard the key parity	and take only 56 bits
+				;
+				; Function compile flags: /Ogtpy
+				; COMDAT ?kinit@@YAXPADH@Z PROC	PUBLIC (C++ without language type!)
+				;
+ 00000071			desKeyInit PROC	C PUBLIC USES ebx esi edi, _key:DWORD, _edf:DWORD
+					LOCAL	_k:DWORD
+					LOCAL	_PermutationPC1m[56]:BYTE
+					LOCAL	_pcr[56]:BYTE
+
+ 00000071  55		   *	    push   ebp
+ 00000072  8B EC	   *	    mov    ebp, esp
+ 00000074  83 C4 8C	   *	    add    esp, 0FFFFFF8Ch
+ 00000077  53		   *	    push   ebx
+ 00000078  56		   *	    push   esi
+ 00000079  57		   *	    push   edi
+ 0000007A  83 3D 00000000 R		cmp	DWORD PTR IgnitedDES, 1	; Speed	optimization
+	   01
+ 00000081  74 0A			je	SHORT @F		; Skip p48init if already done
+
+ 00000083  E8 FFFFFF8C			call	ChkCpuFamily		; Adjust performance coding for	older CPUs
+ 00000088  E8 000003B6			call	p48init			; Prepared for Algorithm here (optimal speed)
+				;
+				; Convert PermutationPC1 to bits of key
+				;
+ 0000008D			@@:
+ 0000008D  8B 75 08			mov	esi, DWORD PTR _key
+ 00000090  33 D2			xor	edx, edx
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 10 - 1
+
+
+
+					ALIGN 16	; Code starts at an xxxxxxx0 addr (see the listing)
+
+ 000000A0			kinit_1:
+ 000000A0  0F BE 8A			movsx	ecx, BYTE PTR PermutationPC1[edx]
+	   00000234 R
+
+ 000000A7  8B C1			mov	eax, ecx
+ 000000A9  83 E1 07			and	ecx, 7
+ 000000AC  C1 F8 03			sar	eax, 3
+
+ 000000AF  0F BE 04 30			movsx	eax, BYTE PTR [eax+esi]
+ 000000B3  85 04 8D			test	eax, DWORD PTR NotationTable8Bit[ecx*4]
+	   000002DC R
+ 000000BA  0F BE 8A			movsx	ecx, BYTE PTR PermutationPC1[edx+1]
+	   00000235 R
+ 000000C1  0F 95 C0			setne	al
+ 000000C4  88 44 15 C4			mov	BYTE PTR _PermutationPC1m[edx],	al
+
+ 000000C8  8B C1			mov	eax, ecx
+ 000000CA  C1 F8 03			sar	eax, 3
+ 000000CD  83 E1 07			and	ecx, 7
+
+ 000000D0  0F BE 04 30			movsx	eax, BYTE PTR [eax+esi]
+ 000000D4  85 04 8D			test	eax, DWORD PTR NotationTable8Bit[ecx*4]
+	   000002DC R
+ 000000DB  0F BE 8A			movsx	ecx, BYTE PTR PermutationPC1[edx+2]
+	   00000236 R
+ 000000E2  0F 95 C0			setne	al
+ 000000E5  88 44 15 C5			mov	BYTE PTR _PermutationPC1m[edx+1], al
+
+ 000000E9  8B C1			mov	eax, ecx
+ 000000EB  C1 F8 03			sar	eax, 3
+ 000000EE  83 E1 07			and	ecx, 7
+ 000000F1  0F BE 04 30			movsx	eax, BYTE PTR [eax+esi]
+ 000000F5  85 04 8D			test	eax, DWORD PTR NotationTable8Bit[ecx*4]
+	   000002DC R
+ 000000FC  0F BE 8A			movsx	ecx, BYTE PTR PermutationPC1[edx+3]
+	   00000237 R
+ 00000103  0F 95 C0			setne	al
+ 00000106  88 44 15 C6			mov	BYTE PTR _PermutationPC1m[edx+2], al
+
+ 0000010A  8B C1			mov	eax, ecx
+ 0000010C  C1 F8 03			sar	eax, 3
+ 0000010F  83 E1 07			and	ecx, 7
+
+ 00000112  0F BE 04 30			movsx	eax, BYTE PTR [eax+esi]
+ 00000116  85 04 8D			test	eax, DWORD PTR NotationTable8Bit[ecx*4]
+	   000002DC R
+ 0000011D  0F 95 C0			setne	al
+ 00000120  88 44 15 C7			mov	BYTE PTR _PermutationPC1m[edx+3], al
+
+ 00000124  83 C2 04			add	edx, 4
+ 00000127  83 FA 38			cmp	edx, 56
+ 0000012A  0F 8C FFFFFF70		jl	kinit_1
+
+ 00000130  33 C9			xor	ecx, ecx				; Init incremental ptr
+ 00000132  C7 45 FC			mov	DWORD PTR _k, 30
+	   0000001E
+
+					ALIGN 16	; Code starts at an xxxxxxx0 addr (see the listing)
+
+ 00000140			kinit_2:
+ 00000140  51				push	ecx					; Save incremental ptr
+ 00000141  8D 04 09			lea	eax, DWORD PTR [ecx+ecx]
+ 00000144  8B 55 FC			mov	edx, DWORD PTR _k
+
+ 00000147  83 7D 0C 01			cmp	DWORD PTR _edf,	DECIPHER		; Encrypt/Decipher Flag
+
+				;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~;
+ 0000014B			kinit686a::			   ;~
+ 0000014B  0F 45 D0			cmovne	edx, eax	   ;~			; .686 CPUs only, Encrypt/Decipher
+ 0000014E  90				nop			   ;~			; Place	holder for .586	CPU code replacement
+				;;	je	@F		   ;~			;~ Code	replacement for	.586 CPUs in	     ~
+				;;	mov	edx, eax	   ;~			;~  routine Permute, where cmov	Instructions ~
+				;;@@:				   ;~			;~  are	not suppported (slower performance)  ~
+				;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ 0000014F  0F BE B9			movsx	edi, BYTE PTR PC1LeftRotationTable[ecx]
+	   0000035C R
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 11 - 1
+
+
+ 00000156  8D 5F E4			lea	ebx, DWORD PTR [edi-28]
+
+ 00000159  C7 04 95			mov	DWORD PTR KeyArray[edx*4+4], 0
+	   00000008 R
+	   00000000
+ 00000164  C7 04 95			mov	DWORD PTR KeyArray[edx*4], 0
+	   00000004 R
+	   00000000
+
+ 0000016F  33 F6			xor	esi, esi
+
+ 00000171			kinit_3:
+ 00000171  83 FE 1C			cmp	esi, 28
+ 00000174  1B C0			sbb	eax, eax
+ 00000176  83 E0 E4			and	eax, 0FFFFFFE4h
+ 00000179  83 C0 38			add	eax, 56
+ 0000017C  8B CF			mov	ecx, edi
+ 0000017E  3B F8			cmp	edi, eax
+
+				;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~;
+ 00000180			kinit686b::			   ;~
+ 00000180  0F 4D CB			cmovge	ecx, ebx	   ;~			; .686 CPUs only
+ 00000183  90				nop			   ;~			; Place	holder for .586	CPU code replacement
+				;;	jb	@F		   ;~			;~ Code	replacement for	.586 CPUs in	     ~
+				;;	mov	ecx, ebx	   ;~			;~  routine Permute, where cmov	Instructions ~
+				;;@@:				   ;~			;~  are	not suppported (slower performance)  ~
+				;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ 00000184  8A 44 0D C4			mov	al, BYTE PTR _PermutationPC1m[ecx]
+ 00000188  88 44 35 8C			mov	BYTE PTR _pcr[esi], al
+
+ 0000018C  47				inc	edi
+ 0000018D  43				inc	ebx
+ 0000018E  46				inc	esi
+ 0000018F  83 FE 38			cmp	esi, 56
+ 00000192  7C DD			jl	SHORT kinit_3
+
+ 00000194  33 C0			xor	eax, eax
+
+					ALIGN 16	; Code starts at an xxxxxxx0 addr (see the listing) 
+
+ 000001A0			kinit_4:
+ 000001A0  0F BE 88			movsx	ecx, BYTE PTR PermutationPC2[eax]
+	   00000204 R
+ 000001A7  80 7C 0D 8C 00		cmp	BYTE PTR _pcr[ecx], 0
+ 000001AC  74 0E			je	SHORT @F
+
+ 000001AE  8B 0C 85			mov	ecx, DWORD PTR NotationTable48Bit[eax*4]
+	   000002FC R
+ 000001B5  09 0C 95			or	DWORD PTR KeyArray[edx*4], ecx
+	   00000004 R
+ 000001BC			@@:
+ 000001BC  0F BE 88			movsx	ecx, BYTE PTR PermutationPC2[eax+24]
+	   0000021C R
+ 000001C3  80 7C 0D 8C 00		cmp	BYTE PTR _pcr[ecx], 0
+ 000001C8  74 0E			je	SHORT @F
+
+ 000001CA  8B 0C 85			mov	ecx, DWORD PTR NotationTable48Bit[eax*4]
+	   000002FC R
+ 000001D1  09 0C 95			or	DWORD PTR KeyArray[edx*4+4], ecx
+	   00000008 R
+ 000001D8			@@:
+ 000001D8  40				inc	eax
+ 000001D9  83 F8 18			cmp	eax, 24
+ 000001DC  7C C2			jl	SHORT kinit_4
+
+ 000001DE  59				pop	ecx			; Restore incremantal ptr
+ 000001DF  41				inc	ecx
+ 000001E0  83 6D FC 02			sub	DWORD PTR _k, 2
+ 000001E4  0F 8D FFFFFF56		jge	kinit_2
+
+					ret
+ 000001EA  5F		   *	    pop    edi
+ 000001EB  5E		   *	    pop    esi
+ 000001EC  5B		   *	    pop    ebx
+ 000001ED  C9		   *	    leave  
+ 000001EE  C3		   *	    ret    00000h
+ 000001EF			desKeyInit ENDP	; desKeyInit
+
+
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 12 - 1
+
+
+				;+----------------------------------------------------------------------------
+				;
+				;			   desAlgorithm
+				;
+				;	desAlgorithm PROTO C, inblock:DWORD, outblock:DWORD
+				;
+				;	Language type: PROC C (Public interface	to desmain.cpp)
+				;	desmain.cpp: extern "C"	void desAlgorithm (char* p1, char* p2);
+				;
+				;	Note: 1) The Language type may be defined for each function seperately.
+				;	      2) C++ Compiler uses "ebp	and [ebp]" when	"/O2" option is	used.
+				;												    
+				;	see: Intel(R) 64 and IA-32 Optimization	Reference Manual
+				;	     "unrolling	loops"
+				;
+				; Function compile flags: /Ogtpy
+				; COMDAT ?desAlgorithm@@YAXPAD0@Z PROC PUBLIC (C++ without language type!)
+				;
+ 000001EF			desAlgorithm PROC C PUBLIC USES	ebx edi	esi, _inblock:DWORD, _outblock:DWORD
+					LOCAL	__ebp:DWORD ; We can't use "ebp" (because of "INVOKE" convention)
+					LOCAL	_keys:DWORD
+					LOCAL	_swap[16]:BYTE
+					LOCAL	_scratch[8]:BYTE
+
+ 000001EF  55		   *	    push   ebp
+ 000001F0  8B EC	   *	    mov    ebp, esp
+ 000001F2  83 C4 E0	   *	    add    esp, 0FFFFFFE0h
+ 000001F5  53		   *	    push   ebx
+ 000001F6  57		   *	    push   edi
+ 000001F7  56		   *	    push   esi
+ 000001F8  8D 75 E0			lea	esi, DWORD PTR _scratch		; Init pointer to _scratch
+					INVOKE permute,	_inblock, OFFSET PermutationIP,	OFFSET ReferenceIP, esi		
+ 000001FB  56		   *	    push   esi
+ 000001FC  68 0000028C R   *	    push   dword  ptr OFFSET FLAT: ReferenceIP
+ 00000201  68 0000026C R   *	    push   dword  ptr OFFSET FLAT: PermutationIP
+ 00000206  FF 75 08	   *	    push   dword  ptr ss:[ebp]+000000008h
+ 00000209  E8 000001EB	   *	    call   permute
+ 0000020E  83 C4 10	   *	    add    esp, 000000010h
+
+ 00000211  8D 7D E8			lea	edi, DWORD PTR _swap		; Init pointer to _swap
+ 00000214  8D 5D F8			lea	ebx, DWORD PTR _swap[16]	; Init end-of _swap
+
+					ALIGN 16
+
+ 00000220			desAlgorit_1:
+ 00000220  0F BE 16			movsx	edx, BYTE PTR [esi][0]		; Data of _scratch[0]
+ 00000223  8D 76 04			lea	esi, DWORD PTR [esi+4]		; Pointer to _scratch from permute
+ 00000226  0F B6 46 FD			movzx	eax, BYTE PTR [esi-3]		; Data of _scratch[1]
+ 0000022A  C1 E0 10			shl	eax, 16
+ 0000022D  C1 E2 18			shl	edx, 24
+ 00000230  0B D0			or	edx, eax
+
+ 00000232  0F B6 46 FE			movzx	eax, BYTE PTR [esi-2]		; Data of _scratch[2]
+ 00000236  C1 E0 08			shl	eax, 8
+ 00000239  0B D0			or	edx, eax
+
+ 0000023B  0F B6 46 FF			movzx	eax, BYTE PTR [esi-1]		; Data of _scratch[3]
+ 0000023F  0B D0			or	edx, eax
+
+ 00000241  8B CA			mov	ecx, edx
+ 00000243  8B C2			mov	eax, edx
+ 00000245  C1 F9 02			sar	ecx, 2
+ 00000248  25 01F80000			and	eax, 01F80000h
+ 0000024D  81 E1 0007E000		and	ecx, 0007E000h
+ 00000253  0B C8			or	ecx, eax
+
+ 00000255  8B C2			mov	eax, edx
+ 00000257  C1 E9 02			shr	ecx, 2
+ 0000025A  25 1F800000			and	eax, 1F800000h
+ 0000025F  0B C8			or	ecx, eax
+
+ 00000261  8B C2			mov	eax, edx
+ 00000263  C1 F8 09			sar	eax, 9
+ 00000266  C1 E9 0B			shr	ecx, 11
+ 00000269  25 007C0000			and	eax, 007C0000h
+ 0000026E  0B C8			or	ecx, eax
+
+ 00000270  8B C2			mov	eax, edx
+ 00000272  83 E0 01			and	eax, 1
+ 00000275  C1 E0 17			shl	eax, 23
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 13 - 1
+
+
+ 00000278  0B C8			or	ecx, eax
+ 0000027A  89 0F			mov	DWORD PTR [edi], ecx		; Data of _swap
+
+ 0000027C  8B C2			mov	eax, edx
+ 0000027E  25 00001F80			and	eax, 00001F80h				
+ 00000283  8B CA			mov	ecx, edx
+ 00000285  81 E1 0001F800		and	ecx, 0001F800h				
+ 0000028B  C1 E1 02			shl	ecx, 2
+ 0000028E  0B C8			or	ecx, eax
+
+ 00000290  8B C2			mov	eax, edx
+ 00000292  C1 E1 02			shl	ecx, 2
+ 00000295  25 000001F8			and	eax, 000001F8h				
+ 0000029A  0B C8			or	ecx, eax
+
+ 0000029C  8B C2			mov	eax, edx
+ 0000029E  C1 E1 02			shl	ecx, 2
+ 000002A1  83 E0 1F			and	eax, 0000001Fh				
+ 000002A4  0B C8			or	ecx, eax
+ 000002A6  C1 FA 1F			sar	edx, 31
+ 000002A9  03 C9			add	ecx, ecx
+ 000002AB  83 E2 01			and	edx, 1
+ 000002AE  0B CA			or	ecx, edx
+ 000002B0  89 4F 04			mov	DWORD PTR [edi+4], ecx		; _swap[+4]
+
+ 000002B3  83 C7 08			add	edi, 8
+ 000002B6  3B FB			cmp	edi, ebx			; Reached end of _swap?
+ 000002B8  0F 82 FFFFFF62		jb	desAlgorit_1			; Continue looping
+				;	--------------------------		------------------
+
+ 000002BE  8D 7D E8			lea	edi, DWORD PTR _swap		; Pointer to _swap[0] (1st half)
+ 000002C1  8D 5D F0			lea	ebx, DWORD PTR _swap[8]		; Pointer to _swap[8] (2nd half)
+
+ 000002C4  B8 00000004 R		mov	eax, OFFSET KeyArray
+ 000002C9  C7 45 FC			mov	DWORD PTR __ebp, 16		; Init loop counter
+	   00000010
+
+					ALIGN 16
+
+ 000002D0			desAlgorit_2:
+ 000002D0  8B 0B			mov	ecx, DWORD PTR [ebx]		; Data of _swap
+ 000002D2  33 08			xor	ecx, DWORD PTR [eax]		; Data of keyArray
+
+ 000002D4  83 C0 04			add	eax, SIZEOF DWORD
+ 000002D7  89 45 F8			mov	DWORD PTR _keys, eax
+
+ 000002DA  8B C1			mov	eax, ecx
+ 000002DC  C1 F8 0C			sar	eax, 12
+ 000002DF  81 E1 00000FFF		and	ecx, 00000FFFh
+
+ 000002E5  0F B6 80			movzx	eax, BYTE PTR SBoxArray12[eax]
+	   00000084 R
+ 000002EC  8B 14 C5			mov	edx, DWORD PTR PermutationArray48a[eax*8]
+	   00004084 R
+ 000002F3  8B 34 C5			mov	esi, DWORD PTR PermutationArray48a[eax*8+4]
+	   00004088 R
+
+ 000002FA  0F B6 81			movzx	eax, BYTE PTR SBoxArray34[ecx]
+	   00001084 R
+ 00000301  8B 4B 04			mov	ecx, DWORD PTR [ebx+4]	
+ 00000304  83 C3 08			add	ebx, 8				; Move pointer to _swap[+8]
+
+ 00000307  0B 14 C5			or	edx, DWORD PTR PermutationArray48b[eax*8]
+	   00004884 R
+ 0000030E  0B 34 C5			or	esi, DWORD PTR PermutationArray48b[eax*8+4]
+	   00004888 R
+
+ 00000315  8B 45 F8			mov	eax, DWORD PTR _keys
+ 00000318  33 08			xor	ecx, DWORD PTR [eax]
+ 0000031A  83 C0 04			add	eax, SIZEOF DWORD
+ 0000031D  89 45 F8			mov	DWORD PTR _keys, eax
+
+ 00000320  8B C1			mov	eax, ecx
+ 00000322  C1 F8 0C			sar	eax, 12
+ 00000325  81 E1 00000FFF		and	ecx, 00000FFFh
+
+ 0000032B  0F B6 80			movzx	eax, BYTE PTR SBoxArray56[eax]
+	   00002084 R
+ 00000332  0B 14 C5			or	edx, DWORD PTR PermutationArray48c[eax*8]
+	   00005084 R
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 14 - 1
+
+
+ 00000339  0B 34 C5			or	esi, DWORD PTR PermutationArray48c[eax*8+4]
+	   00005088 R
+
+ 00000340  0F B6 89			movzx	ecx, BYTE PTR SBoxArray78[ecx]
+	   00003084 R
+ 00000347  8B 04 CD			mov	eax, DWORD PTR PermutationArray48d[ecx*8]
+	   00005884 R
+ 0000034E  0B C2			or	eax, edx
+ 00000350  31 07			xor	DWORD PTR [edi], eax		; _swap
+
+ 00000352  8B 04 CD			mov	eax, DWORD PTR PermutationArray48d[ecx*8+4]
+	   00005888 R
+ 00000359  0B C6			or	eax, esi
+ 0000035B  31 47 04			xor	DWORD PTR [edi+SIZEOF DWORD], eax ; _swap[+4]
+ 0000035E  83 C7 08			add	edi, 8				  ; Move pointer to _swap[+8]
+
+ 00000361  8D 4D E8			lea	ecx, DWORD PTR _swap		; Prepare _swap[0] pointer reload 
+ 00000364  F6 45 FC 01			test	BYTE PTR __ebp,	1		; Test _swap-index evn/odd
+
+				;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~;
+ 00000368			desAlgo686::			   ;~		; :: QWORD Label to insert .586	code if	needed
+ 00000368  0F 44 D9			cmove	ebx, ecx	   ;~		; .686 EVN: ebx	= _swap	(performance)
+ 0000036B  0F 47 F9			cmovnbe	edi, ecx	   ;~		; .686 ODD: edi	= _swap	(performance)
+ 0000036E  90				nop			   ;~		; Place	holder for .586	CPU code replacement
+ 0000036F  90				nop			   ;~		; Place	holder for .586	CPU code replacement
+				;;	jne	@F		   ;~		;~ 'cmov' Instructions not suppported (slower performance) ~
+				;;	mov	ebx, ecx	   ;~		;~ .586	EVN: ebx = _swap				   ~
+				;;	jmp	SHORT _desAlgo2a   ;~		;~							   ~
+				;;@@:				   ;~		;~							   ~
+				;;	mov	edi, ecx	   ;~		;~ .586	ODD: edi = _swap				   ~
+				;;_desAlgo2a:			   ;~		;~							   ~
+				;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ 
+
+ 00000370  8B 45 F8			mov	eax, DWORD PTR _keys
+ 00000373  FF 4D FC			dec	DWORD PTR __ebp
+ 00000376  0F 85 FFFFFF54		jnz	desAlgorit_2			; Continue looping
+				;	--------------------			------------------
+
+ 0000037C  8B 0F			mov	ecx, DWORD PTR [edi]		; Get _swap data
+ 0000037E  8B 03			mov	eax, DWORD PTR [ebx]		; Get _swap data
+ 00000380  89 07			mov	DWORD PTR [edi], eax		; Put _swap data
+ 00000382  89 0B			mov	DWORD PTR [ebx], ecx		; Put _swap data
+
+ 00000384  8B 4F 04			mov	ecx, DWORD PTR [edi+4]		; Get _swap data
+ 00000387  8B 43 04			mov	eax, DWORD PTR [ebx+4]		; Get _swap data
+ 0000038A  89 47 04			mov	DWORD PTR [edi+4], eax		; Put _swap data
+ 0000038D  89 4B 04			mov	DWORD PTR [ebx+4], ecx		; Put _swap data
+
+ 00000390  8D 75 E0			lea	esi, DWORD PTR _scratch		; Pointer to _scratch[0]
+ 00000393  8D 7D E8			lea	edi, DWORD PTR _swap		; Pointer to _swap[0]
+ 00000396  8D 5D F8			lea	ebx, DWORD PTR _swap[16]	; Init pointer to end-of _swap
+
+					ALIGN 16
+
+ 000003A0			desAlgorit_3:
+ 000003A0  8B 17			mov	edx, DWORD PTR [edi]		; Get _swap data
+ 000003A2  8B CA			mov	ecx, edx
+
+ 000003A4  8B C2			mov	eax, edx
+ 000003A6  C1 F9 0D			sar	ecx, 13
+ 000003A9  C1 F8 0F			sar	eax, 15
+ 000003AC  32 C8			xor	cl, al
+
+ 000003AE  8B C2			mov	eax, edx
+ 000003B0  80 E1 0F			and	cl, 0Fh
+ 000003B3  C1 F8 0F			sar	eax, 15
+ 000003B6  32 C8			xor	cl, al
+
+ 000003B8  8D 76 02			lea	esi, DWORD PTR [esi+2]		; Pointer to _scratch
+ 000003BB  88 4E FE			mov	BYTE PTR [esi-2], cl		; Data of _scratch[0]
+
+ 000003BE  8B C2			mov	eax, edx
+ 000003C0  8B CA			mov	ecx, edx
+ 000003C2  D1 F9			sar	ecx, 1
+ 000003C4  C1 F8 03			sar	eax, 3
+ 000003C7  32 C8			xor	cl, al
+ 000003C9  C1 FA 03			sar	edx, 3
+ 000003CC  80 E1 0F			and	cl, 0Fh
+ 000003CF  32 CA			xor	cl, dl
+
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 15 - 1
+
+
+ 000003D1  88 4E FF			mov	BYTE PTR [esi-1], cl
+
+ 000003D4  83 C7 04			add	edi, SIZEOF DWORD		; Move _swap pointer
+ 000003D7  3B FB			cmp	edi, ebx
+ 000003D9  72 C5			jb	SHORT desAlgorit_3		; Continue looping
+				;	--------------------------		------------------
+
+ 000003DB  8D 45 E0			lea	eax, DWORD PTR _scratch
+					INVOKE permute,	eax, OFFSET ReferenceIP, OFFSET	PermutationIP, _outblock	
+ 000003DE  FF 75 0C	   *	    push   dword  ptr ss:[ebp]+00000000Ch
+ 000003E1  68 0000026C R   *	    push   dword  ptr OFFSET FLAT: PermutationIP
+ 000003E6  68 0000028C R   *	    push   dword  ptr OFFSET FLAT: ReferenceIP
+ 000003EB  50		   *	    push   eax
+ 000003EC  E8 00000008	   *	    call   permute
+ 000003F1  83 C4 10	   *	    add    esp, 000000010h
+
+					ret
+ 000003F4  5E		   *	    pop    esi
+ 000003F5  5F		   *	    pop    edi
+ 000003F6  5B		   *	    pop    ebx
+ 000003F7  C9		   *	    leave  
+ 000003F8  C3		   *	    ret    00000h
+ 000003F9			desAlgorithm ENDP ; desAlgorithm
+
+
+				;+----------------------------------------------------------------------------
+				;
+				;			permute	 (very fast, .686 only)
+				;
+				;	see: Intel(R) 64 and IA-32 Optimization	Reference Manual
+				;	     "unrolling	LOOPs, using CMOVcc instructions instead of Jcc"
+				;
+ 000003F9			permute	PROC C USES ebx	edi esi, __inblock:DWORD, _test:DWORD, _vals:DWORD, __outblock:DWORD
+ 000003F9  55		   *	    push   ebp
+ 000003FA  8B EC	   *	    mov    ebp, esp
+ 000003FC  53		   *	    push   ebx
+ 000003FD  57		   *	    push   edi
+ 000003FE  56		   *	    push   esi
+ 000003FF  8B 75 08			mov	esi, DWORD PTR __inblock	; Init ptr to __inblock
+ 00000402  8B 7D 14			mov	edi, DWORD PTR __outblock	; Init ptr to __outblock
+ 00000405  C7 07 00000000		mov	DWORD PTR [edi], 0		; Clear	_outblock 
+ 0000040B  C7 47 04			mov	DWORD PTR [edi][BLOCK_SIZE/2], 0; Compiler uses	"memset()"
+	   00000000
+
+ 00000412  8B 45 10			mov	eax, DWORD PTR _vals		; ReferenceIP
+
+ 00000415  8D 5F 08			lea	ebx, DWORD PTR [edi+8]		; End-of __outblock
+ 00000418  8D 4E 08			lea	ecx, DWORD PTR [esi+8]		; End-of __inblock
+
+ 0000041B			permute_1:
+ 0000041B  8B 55 0C			mov	edx, DWORD PTR _test		; PermutationIP
+ 0000041E  51				push	ecx				; Save end-of __inblock
+ 0000041F  57				push	edi				; Save start-of	__outblock  
+
+					ALIGN 16
+
+ 00000420			permute_2:					  ; - Performance optimized -
+ 00000420  0F BE 0E			movsx	ecx, BYTE PTR [esi]		  ; Data from __inblock
+ 00000423  8D 52 04			lea	edx, DWORD PTR [edx+SIZEOF DWORD] ; PermutationIP
+ 00000426  23 4A FC			and	ecx, DWORD PTR [edx-SIZEOF DWORD] ; ZR:	ecx=0, NZ ecx=data (Perm / RefIP)
+
+				;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~;
+ 00000429			permute686::			    ;~		; :: DWORD Label to insert .586	code if	needed
+ 00000429  0F 47 08			cmovnbe	ecx, DWORD PTR [eax];~		; .686 NZ: Prepare data	for __outblock (performance)
+ 0000042C  90				nop			    ;~		; Place	holder for .586	CPU code replacement
+				;;	je	@F		    ;~		;~ Code	replacement for	.586 CPUs in	     ~
+				;;	mov	ecx, DWORD PTR [eax];~		;~  routine Permute, where cmov	Instructions ~
+				;;@@:				    ;~		;~  are	not suppported (slower performance)  ~
+				;~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ 0000042D  08 0F			or	BYTE PTR [edi],	cl		; ZR/NZ: Apply to __outblock data
+
+ 0000042F  47				inc	edi				; Advance __outblock
+ 00000430  3B FB			cmp	edi, ebx			; End-of __outblock?
+ 00000432  72 EC			jb	SHORT permute_2
+
+ 00000434  5F				pop	edi				; Restore start-of __outblock
+ 00000435  59				pop	ecx				; Restore end-of __inblock
+ 00000436  83 C0 04			add	eax, SIZEOF DWORD		; ReferenceIP (_vals)
+ 00000439  46				inc	esi				; Advance __inblock
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 16 - 1
+
+
+ 0000043A  3B F1			cmp	esi, ecx			; End-of __inblock?
+ 0000043C  72 DD			jb	SHORT permute_1			; "loop	permute_1"
+
+					ret
+ 0000043E  5E		   *	    pop    esi
+ 0000043F  5F		   *	    pop    edi
+ 00000440  5B		   *	    pop    ebx
+ 00000441  C9		   *	    leave  
+ 00000442  C3		   *	    ret    00000h
+ 00000443			permute	ENDP ; permute			 
+
+
+				;+----------------------------------------------------------------------------
+				;
+				;				p48init
+				;
+ 00000443			p48init	PROC C USES ebx	edi esi
+ 00000443  53		   *	    push   ebx
+ 00000444  57		   *	    push   edi
+ 00000445  56		   *	    push   esi
+ 00000446  33 FF			xor	edi, edi		; Init index counter
+
+					ALIGN 16
+
+ 00000450			p48init_1:
+ 00000450  8B CF			mov	ecx, edi	       
+
+ 00000452  8B C7			mov	eax, edi
+ 00000454  25 00000800			and	eax, 00000800h
+ 00000459  D1 E9			shr	ecx, 1		       
+ 0000045B  8B F1			mov	esi, ecx
+ 0000045D  8B D7			mov	edx, edi
+ 0000045F  81 E6 000003C0		and	esi, 000003C0h 
+ 00000465  83 E2 01			and	edx, 00000001h
+ 00000468  0B F0			or	esi, eax
+ 0000046A  C1 E2 04			shl	edx, 4
+
+ 0000046D  8B C7			mov	eax, edi
+ 0000046F  C1 EE 04			shr	esi, 4
+ 00000472  83 E0 40			and	eax, 00000040h
+ 00000475  83 E1 0F			and	ecx, 0000000Fh					
+ 00000478  0B F0			or	esi, eax
+ 0000047A  0B D1			or	edx, ecx	       
+
+ 0000047C  8B C7			mov	eax, edi
+ 0000047E  C1 EE 02			shr	esi, 2
+ 00000481  83 E0 20			and	eax, 00000020h					
+ 00000484  0B D0			or	edx, eax
+
+ 00000486  0F B6 82			movzx	eax, BYTE PTR SBox2[edx]	; Merge	SBox1 &	SBox2
+	   00000044 R
+ 0000048D  0A 86 00000004 R		or	al, BYTE PTR SBox1[esi]
+ 00000493  88 87 00000084 R		mov	BYTE PTR SBoxArray12[edi], al
+
+ 00000499  0F B6 82			movzx	eax, BYTE PTR SBox4[edx]	; Merge	SBox3 &	SBox4
+	   000000C4 R
+ 000004A0  0A 86 00000084 R		or	al, BYTE PTR SBox3[esi]
+ 000004A6  88 87 00001084 R		mov	BYTE PTR SBoxArray34[edi], al
+
+ 000004AC  0F B6 82			movzx	eax, BYTE PTR SBox6[edx]	; Merge	SBox5 &	SBox6
+	   00000144 R
+ 000004B3  0A 86 00000104 R		or	al, BYTE PTR SBox5[esi]
+ 000004B9  88 87 00002084 R		mov	BYTE PTR SBoxArray56[edi], al
+
+ 000004BF  0F B6 82			movzx	eax, BYTE PTR SBox8[edx]	; Merge	SBox7 &	SBox8
+	   000001C4 R
+ 000004C6  0A 86 00000184 R		or	al, BYTE PTR SBox7[esi]
+ 000004CC  88 87 00003084 R		mov	BYTE PTR SBoxArray78[edi], al
+
+ 000004D2  47				inc	edi				; Advance SBoxArray merge index	
+ 000004D3  81 FF 00001000		cmp	edi, SBOX_ARRAY_SIZE		; 4096
+ 000004D9  0F 8C FFFFFF71		jl	p48init_1
+
+				;------------------------------------------------------------------------------
+				;
+				;	PermutationArray48a-d dispatcher
+				;
+ 000004DF  33 DB			xor	ebx, ebx			; Jump table start index
+
+ 000004E1			p48initDispatch:				; Fill PermutationArrays
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 17 - 1
+
+
+ 000004E1  83 FB 03			cmp	ebx, 3
+ 000004E4  0F 87 0000011A		ja	p48xinit_exit			; Done.
+ 000004EA  FF 24 9D			jmp	DWORD PTR p48xinit_jmp[ebx*SIZEOF DWORD]	
+	   000004F1 R
+
+ 000004F1			p48xinit_jmp:			  
+ 000004F1  00000501 R			DD	InitArray48a			; Jump table
+ 000004F5  00000517 R			DD	InitArray48b
+ 000004F9  0000052D R			DD	InitArray48c
+ 000004FD  00000543 R			DD	InitArray48d
+
+ 00000501			InitArray48a:
+ 00000501  C7 05 0000036C R		mov	DWORD PTR pfill, OFFSET	PermutationArray48a ; pfill 48a
+	   00004084 R
+ 0000050B  C7 05 00000370 R		mov	DWORD PTR _cmp48x, 0
+	   00000000
+ 00000515  EB 42			jmp	p48xinit
+
+ 00000517			InitArray48b:
+ 00000517  C7 05 0000036C R		mov	DWORD PTR pfill, OFFSET	PermutationArray48b ; pfill 48b
+	   00004884 R
+ 00000521  C7 05 00000370 R		mov	DWORD PTR _cmp48x, 8
+	   00000008
+ 0000052B  EB 2C			jmp	p48xinit
+
+ 0000052D			InitArray48c:
+ 0000052D  C7 05 0000036C R		mov	DWORD PTR pfill, OFFSET	PermutationArray48c ; pfill 48c
+	   00005084 R
+ 00000537  C7 05 00000370 R		mov	DWORD PTR _cmp48x, 16
+	   00000010
+ 00000541  EB 16			jmp	p48xinit
+
+ 00000543			InitArray48d:
+ 00000543  C7 05 0000036C R		mov	DWORD PTR pfill, OFFSET	PermutationArray48d ; pfill 48d
+	   00005884 R
+ 0000054D  C7 05 00000370 R		mov	DWORD PTR _cmp48x, 24
+	   00000018
+ 00000557  EB 00			jmp	p48xinit
+
+				;------------------------------------------------------------------------------
+				;
+				;		Init PermutationArray48a-d
+				;
+ 00000559			p48xinit:
+ 00000559  53				push	ebx		; Save jmp table index from dispatcher
+ 0000055A  8B 1D 0000036C R		mov	ebx, DWORD PTR pfill	; Get pointer to PermutationArray48x 
+
+ 00000560  33 C9			xor	ecx, ecx		; Init array index count
+
+					ALIGN	16
+
+ 00000570			p48xinit_2:
+				;;ha;;	xorps	xmm0, xmm0		       ; .686 Clear 128	bit xmm0 (CPU register)
+				;;ha;;	movq	QWORD PTR [ebx][ecx*8],	xmm0   ; .686 Storing 64 bit (8	Bytes) from xmm0
+				;;ha;;					       ;  in order to clear next chunk
+				;;ha;;					       ;  of PermutationArray48x.
+ 00000570  C7 04 CB			mov	DWORD PTR [ebx][ecx*8],	0      ;;ha;; .586 & .686  CPU Clear next chunk
+	   00000000
+ 00000577  C7 44 CB 04			mov	DWORD PTR [ebx+4][ecx*8], 0    ;;ha;; .586 & .686  CPU	of PermutationArray48x.
+	   00000000
+
+ 0000057F  33 D2			xor	edx, edx
+
+ 00000581			p48xinit_3:
+ 00000581  0F B6 B2			movzx	esi, BYTE PTR Permutation48i[edx]
+	   000002AC R
+ 00000588  8B C6			mov	eax, esi
+ 0000058A  83 E0 F8			and	eax, 0FFFFFFF8h					
+ 0000058D  3B 05 00000370 R		cmp	eax, DWORD PTR _cmp48x		; 0,8,16,24
+ 00000593  75 16			jne	SHORT @F
+
+ 00000595  83 E6 07			and	esi, 7
+ 00000598  85 0C B5			test	DWORD PTR NotationTable8Bit[esi*4], ecx
+	   000002DC R
+ 0000059F  74 0A			je	SHORT @F
+
+ 000005A1  8B 04 95			mov	eax, DWORD PTR NotationTable48Bit[edx*4]
+	   000002FC R
+ 000005A8  09 04 CB			or	DWORD PTR [ebx][ecx*8],	eax
+ 000005AB			@@:
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 18 - 1
+
+
+ 000005AB  42				inc	edx
+ 000005AC  81 FA 00000018		cmp	edx, NOTATION_48BIT_SIZE / SIZEOF DWORD
+ 000005B2  7C CD			jl	SHORT p48xinit_3
+
+ 000005B4  BF 00000018			mov	edi, NOTATION_48BIT_SIZE / SIZEOF DWORD
+ 000005B9  BE 000002FC R		mov	esi, OFFSET NotationTable48Bit
+
+ 000005BE			p48xinit_4:
+ 000005BE  0F B6 97			movzx	edx, BYTE PTR Permutation48i[edi]
+	   000002AC R
+ 000005C5  8B C2			mov	eax, edx
+ 000005C7  83 E0 F8			and	eax, 0FFFFFFF8h
+ 000005CA  3B 05 00000370 R		cmp	eax, DWORD PTR _cmp48x		; 0,8,16,24
+ 000005D0  75 12			jne	SHORT @F
+
+ 000005D2  83 E2 07			and	edx, 7
+ 000005D5  85 0C 95			test	DWORD PTR NotationTable8Bit[edx*4], ecx
+	   000002DC R
+ 000005DC  74 06			je	SHORT @F
+
+ 000005DE  8B 06			mov	eax, DWORD PTR [esi]
+ 000005E0  09 44 CB 04			or	DWORD PTR [ebx][ecx*8+4], eax
+ 000005E4			@@:
+ 000005E4  83 C6 04			add	esi, SIZEOF DWORD
+ 000005E7  47				inc	edi
+ 000005E8  81 FE 00000060		cmp	esi, OFFSET NotationTable48Bit+NOTATION_48BIT_SIZE
+ 000005EE  7C CE			jl	SHORT p48xinit_4
+
+ 000005F0  41				inc	ecx
+ 000005F1  81 F9 00000100		cmp	ecx, 256
+ 000005F7  0F 8C FFFFFF73		jl	p48xinit_2
+
+ 000005FD  5B				pop	ebx				; Restore jmp table index
+ 000005FE  43				inc	ebx				; Advance jmp table entry
+ 000005FF  E9 FFFFFEDD			jmp	p48initDispatch			 ; Init	next p48Array
+
+ 00000604			p48xinit_exit:
+ 00000604  C7 05 00000000 R		mov	DWORD PTR IgnitedDES, 1	; Tell the outside world wer're	done
+	   00000001
+
+ 0000060E			p48xinit_ret:
+					ret
+ 0000060E  5E		   *	    pop    esi
+ 0000060F  5F		   *	    pop    edi
+ 00000610  5B		   *	    pop    ebx
+ 00000611  C3		   *	    ret    00000h
+ 00000612			p48init	ENDP ; p48init
+
+				;;ha;;;+-----------------------------------------------------------------------------
+				;;ha;;;
+				;;ha;;;	_desOneway - Generates an 8 byte block of DES encrypted	text
+				;;ha;;;		     from a source buffer of plain text
+				;;ha;;;	Entry:
+				;;ha;;;	  gs:bx	= Pointer to the secret	key ("KMauth!")
+				;;ha;;;	  ds:esi = Pointer to an 8 byte-block of plain text (p)
+				;;ha;;;	  es:edi = Pointer to a	buffer intercepting the	encrypted text
+				;;ha;;;	Exit:
+				;;ha;;;	  es:di	= Pointer to the 8 byte-block of encrypted text	(c)
+				;;ha;;;
+				;;ha;;;	Modified:
+				;;ha;;;	  ax, cx, all other registers are preserved
+				;;ha;;;
+				;;ha;;;	Description:
+				;;ha;;;	  The ONEWAY function is accomplished by modifying the secret key
+				;;ha;;;	  with the plain text block. To	decipher the encrypted text the	plain
+				;;ha;;;	  text is also necessary.
+				;;ha;;;
+				;;ha;;;		key* = key ^ p
+				;;ha;;;
+				;;ha;;;		The formula for	the encrypted text is
+				;;ha;;;
+				;;ha;;;		c = DES(key*; p).
+				;;ha;;;
+				;;ha;;;
+				;;ha;;desOneway	PROC C PUBLIC USES ebx esi edi,	_inblock:DWORD,	_outblock:DWORD, _key:DWORD
+				;;ha;;	LOCAL key[BLOCK_SIZE]:BYTE	; Buffer for the modified key
+				;;ha;;
+				;;ha;;	mov	esi, DWORD PTR _inblock	; Init ptr to _inblock
+				;;ha;;	mov	edi, DWORD PTR _outblock; Init ptr to _outblock
+				;;ha;;	mov	ebx, DWORD PTR _key	; Init ptr to _key "ee3"
+Microsoft (R) Macro Assembler Version 14.28.29910.0	    02/24/25 18:17:18
+C:\Temp600\__\desfast.asm				     Page 19 - 1
+
+
+				;;ha;;;									  
+				;;ha;;;	Modify the secret key with the plain text and copy the modified
+				;;ha;;;	key into a temporary buffer on stack
+				;;ha;;;
+				;;ha;;	push	esi			; Save plain text pointer
+				;;ha;;
+				;;ha;;	lea	edx, key		; Init pointer to the temporary	key "ee3*"
+				;;ha;;	mov	ecx, BLOCK_SIZE		; Handle all elements of the "ee3" key
+				;;ha;;@@:
+				;;ha;;	lodsb				; Read a byte of plain text
+				;;ha;;	xor	al, [ebx]		; XOR key with plain text
+				;;ha;;	mov	[edx], al		; Store	it into	the temporary buffer
+				;;ha;;	inc	edx			; Advance to next buffer "ee3*"	location
+				;;ha;;	inc	ebx			; Advance to next key "ee3" element
+				;;ha;;	loop	@B
+				;;ha;;
+				;;ha;;	pop	esi			; Restore plain	text pointer
+				;;ha;;
+				;;ha;;	lea	ebx, key		; Load pointer to the secret key "ee3*"
+				;;ha;;	INVOKE desKeyInit, ebx,	ENCRYPT	; Prepare initial key permutation
+				;;ha;;	INVOKE desAlgorithm, esi, edi	; Finally, apply the SCA-85 algorithm
+				;;ha;;	ret				; Return the encrypted block
+				;;ha;;desOneway	ENDP ; desOneway
+
+				;------------------------------------------------------------------------------
+					 
+				;;ha;;_TEXT ENDS
+ 00000612			_SMC	ENDS	  ; Self-modifying Code	(SMC) special section name: _SMC (rd/wr/ex)
+					END	  ; The	linker option is appropriatetly	defined	in "HEDIT.NMK"
+
+				;------------------------------------------------------------------------------
+
+				;;ha;;;;---DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG---
+				;;ha;;;;---DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG---
+				;;ha;;	push	esi
+				;;ha;;	push	edi
+				;;ha;;	push	ecx
+				;;ha;;	mov	esi, DWORD PTR _key
+				;;ha;;	mov	edi, OFFSET _3desDebugbuf
+				;;ha;;	mov	ecx, SIZEOF _3desDebugbuf/2	; 1st half to intercept	_key
+				;;ha;;	rep movs BYTE PTR [edi], [esi]	   
+				;;ha;;;	-----------------------------------
+				;;ha;;	mov	ecx, DWORD PTR _edf		; 2nd half multi purpose
+				;;ha;;	mov	DWORD PTR [edi], ecx
+				;;ha;;	pop	ecx
+				;;ha;;	pop	edi
+				;;ha;;	pop	esi
+				;;ha;;;;---DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG---
+				;;ha;;;;---DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG------DEBUG---
+
+				;;ha;;---DEBUG------DEBUG------DEBUG------DEBUG---
+				;;ha;; mov	esi, DWORD PTR _outblock
+				;;ha;; mov	edi, OFFSET _desDebugbuf
+				;;ha;; mov	ecx, 8
+				;;ha;; rep movsb
+				;;ha;;---DEBUG------DEBUG------DEBUG------DEBUG---
+
+				;;ha;;---DEBUG------DEBUG------DEBUG------DEBUG---
+				;;ha;; mov	esi, DWORD PTR _inblock
+				;;ha;; mov	edi, OFFSET _desDebugbuf
+				;;ha;; mov	ecx, 8
+				;;ha;; rep movsb
+				;;ha;;---DEBUG------DEBUG------DEBUG------DEBUG---

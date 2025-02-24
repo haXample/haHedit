@@ -1,0 +1,319 @@
+## haHedit.nmk - NMAKE Developer script file.
+## (c)2023 by helmut altmann
+
+#******************************************************************************
+# NMake file for the 32/64bit Windows Console-App Project: PROJ.EXE
+#
+#  -------------------------------------------------------------
+# |                  Copyright (c)2023 by ha.                   |
+#  -------------------------------------------------------------
+#
+#     ---------------------------------------
+#    |  Invocation:  NMAKE haHedit.nmk /ALL  |  21.12.2023 ha
+#     ---------------------------------------
+#
+#    C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools:
+#
+#    64bit-Version Build for Windows 10 and greater
+#      Visual Studio 2019 Developer Command Prompt v16.8.4
+#      [vcvarsall.bat] Environment initialized for: 'x64'
+#      Copyright (c) 2020 Microsoft Corporation
+#      C:\Program Files (x86)\Microsoft Visual Studio\2019\Community>
+#     Microsoft (R) Macro Assembler (x64) 'ML64' Version 14.28.29336.0
+#     Microsoft (R) C/C++-Optimierungscompiler Version 19.28.29336 for x64
+#     Microsoft (R) Incremental Linker Version 14.28.29336.0
+#     Microsoft (R) Program Maintenance Utility, Version 14.28.29336.0
+#
+#    32bit-Version Build for Windows XP and >= Win10
+#        Visual Studio 2010 Developer Command Prompt
+#        C:\Program Files (x86)\Microsoft Visual Studio 10.0\VC>
+#        C:\Program Files (x86)\Microsoft Visual Studio\2010\BuildTools: XP SP3
+#        Microsoft (R) Macro Assembler Version 14.28.29910.0
+#        Microsoft (R) C/C++-Optimierungscompiler Version 16.00.30319.01 for x86 XP
+#        Microsoft (R) Incremental Linker Version 10.00.30319.01
+#        Microsoft (R) Program Maintenance Utility, Version 10.00.30319.01
+#
+#    32bit-Version Build for Win10 and greater
+#        C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools: Windows 10
+#        Microsoft (R) Macro Assembler Version 14.28.29910.0
+#        Microsoft (R) C/C++-Optimierungscompiler Version 19.28.29910 for x86
+#        Microsoft (R) Incremental Linker Version 14.28.29910.0
+#        Microsoft (R) Program Maintenance Utility, Version 14.28.29910.0
+#
+# Product: PROJ.EXE                                                          
+# Module: haPROJ.nmk                                                        
+#
+#---------------------------------------------------------------------------
+
+PROJ = HEDIT                    # The ASM & C++ modules
+FOLDER = C:\Temp600\__\         # Folder prefix to the project,
+                                #  using 2010 or 2019 MS Build-tools.
+
+#OBJ = .^\                      # Place to put object files
+#LST = .\$(@B).LST              # Place to put listing files
+#LST = .\NUL                    # Place to discard files
+
+# --------------
+# INFERENCE RULE                                                                                      
+# --------------
+.asm.obj:
+#       @ML $(AFLAGS) /Fo$(FOLDER)$(@B).obj /Fl$(FOLDER)$(@B).lst $(FOLDER)$(@B).asm
+#       @ML64 $(AFLAGS) /Fo$(FOLDER)$(@B).obj /Fl$(FOLDER)$(@B).lst $(FOLDER)$(@B).asm
+        $(AS) $(AFLAGS) /Fo$(FOLDER)$(@B).obj /Fl$(FOLDER)$(@B).lst $(FOLDER)$(@B).asm
+
+.c.obj:
+        @CL $(CFLAGS) /Fo$(FOLDER)$(@B).obj $(FOLDER)$(@B).c
+
+.cpp.obj:
+        @CL $(CFLAGS) /Fo$(FOLDER)$(@B).obj $(FOLDER)$(@B).cpp
+
+# --------------------------------------------
+# PSEUDO TARGET POINTING TO THE REAL TARGET(S)
+# --------------------------------------------
+_all:   $(FOLDER)$(PROJ).exe \
+        $(FOLDER)$(PROJ)_desQuick.obj $(FOLDER)des.obj \
+        $(FOLDER)$(PROJ)_aesQuick.obj $(FOLDER)aes.obj \
+        $(FOLDER)$(PROJ)Quick.exe
+
+#------------------------------------------------------------------------------
+#
+#               $(PROJ) TARGET BUILD (Macros for build-control)
+#
+$(FOLDER)$(PROJ):
+#
+##!IFNDEF SETVERSION
+##      date /T >$(FOLDER)haCryptBuildTime.ver
+##      time /T >>$(FOLDER)haCryptBuildTime.ver
+##      $(FOLDER)BuildVersion.vbs
+##!ELSE
+##      $(FOLDER)SetVersion.vbs INIT
+##!ENDIF
+#
+# Set a flag in an NMAKE Makefile if the cl compiler version is 16.
+# Note that cl /? prints the version information to the standard error stream
+#  and the help text to the standard output.
+#  To be able to check the version with the 'findstr' command one must first
+#  redirect stderr to stdout using 2>&1.
+# 
+# -------------------------------------------------
+# Determine the assembler/compiler version in use: |
+#  Microsoft Visual Studio 2019 (Windows10 64bit)  |
+#   ML64 Version 14.28.29336.0 for x64             |
+#   CL Version 19.28.29336 for x64                 |
+#  Microsoft Visual Studio 2019 (Windows10 32bit)  |
+#   ML Version 14.28.29910.0 for x86               |
+#   CL Version 19.28.29910 for x86                 |
+#  Microsoft Visual Studio 2010 (WindowsXP 32bit)  |
+#   ML Version 14.28.29910.0 for x86 (=VS 2019)    |
+#   CL Version 16.00.30319.01 for 80x86            |
+# -------------------------------------------------
+!IF ([ml64 2>&1 | findstr /C:"x64" > nul] == 0) 
+FLAG = "64bit Version"         # 64bit for Windows 10
+!ELSEIF ([cl 2>&1 | findstr /C:"Version 16" > nul] == 0)
+FLAG = "32bit XP Version"      # 32bit for XP and Win10
+OS = _XP
+!ELSE 
+FLAG = "32bit Version"         # 32bit for Windows 10
+OS =
+!ENDIF
+# Nice trick to display the current Version $(FLAG)
+# Since Nmake does not recognize any console commands
+# at this point within the script.
+!IF ([ECHO 2>&1 ---BUILD---$(FLAG)])
+!ENDIF
+!IF ([ECHO. 2>&1])
+!ENDIF
+
+# -------------------
+# Global tool options
+# -------------------
+AFLAGS=/nologo /c /Sn /Sg /Sp84 
+
+!IF ($(FLAG) == "64bit Version")        # For Win10
+CFLAGS=/c /nologo /Gs /O2 /MT /Dx64 /EHsc
+LFLAGS=/MANIFESTUAC:"level='asInvoker' uiAccess='false'" /LARGEADDRESSAWARE:NO
+!ELSE                                   # For Windows XP and Win10
+CFLAGS=/c /nologo /Gs /O2 /MT /EHsc
+# Note: "32bit XP Version" only (needed for Pentium CPUs);
+# Self-modifying Code (SMC) special section name: _SMC,RWE [=Rd/Wr/Ex]
+LFLAGS=/SECTION:_SMC,RWE /MANIFESTUAC:"uiAccess='true'"
+!ENDIF     
+
+# --------------------------------------------------
+# Macro definitions of the object module depedencies
+# --------------------------------------------------
+OBJECTS = $(FOLDER)$(PROJ).obj $(FOLDER)$(PROJ)_b.obj $(FOLDER)$(PROJ)_c.obj \
+          $(FOLDER)$(PROJ)_f.obj $(FOLDER)$(PROJ)_q.obj $(FOLDER)$(PROJ)_v.obj \
+          $(FOLDER)$(PROJ)_vi.obj $(FOLDER)$(PROJ)_vii.obj $(FOLDER)$(PROJ)_viii.obj \
+          $(FOLDER)$(PROJ)_x.obj \
+!IF ($(FLAG) == "64bit Version")        # For Win10
+          $(FOLDER)$(PROJ)_aes.obj $(FOLDER)aesfast64.obj \
+          $(FOLDER)$(PROJ)_des.obj $(FOLDER)desfast64.obj \
+          $(FOLDER)$(PROJ)_tdes.obj $(FOLDER)tdesfast64.obj
+!ELSE                                   # For Windows XP and Win10
+          $(FOLDER)$(PROJ)_des.obj $(FOLDER)desfast.obj \
+          $(FOLDER)$(PROJ)_tdes.obj $(FOLDER)tdesfast.obj \
+          $(FOLDER)$(PROJ)_aes.obj $(FOLDER)aesfast.obj 
+!ENDIF     
+
+OBJECTSQUICK = $(FOLDER)$(PROJ).obj $(FOLDER)$(PROJ)_b.obj $(FOLDER)$(PROJ)_c.obj \
+               $(FOLDER)$(PROJ)_f.obj $(FOLDER)$(PROJ)_q.obj $(FOLDER)$(PROJ)_v.obj \
+               $(FOLDER)$(PROJ)_vi.obj $(FOLDER)$(PROJ)_vii.obj $(FOLDER)$(PROJ)_viii.obj \
+               $(FOLDER)$(PROJ)_x.obj \
+               $(FOLDER)$(PROJ)_aesQuick.obj $(FOLDER)aes.obj \
+               $(FOLDER)$(PROJ)_desQuick.obj $(FOLDER)des.obj \
+!IF ($(FLAG) == "64bit Version")        # For in10
+               $(FOLDER)$(PROJ)_tdes.obj $(FOLDER)tdesfast64.obj
+!ELSE                                   # For Windows XP and Win10
+               $(FOLDER)$(PROJ)_tdes.obj $(FOLDER)tdesfast.obj
+!ENDIF     
+
+CLEAN =  $(FOLDER)*.Link
+
+#------------------------------------------------------------------------------
+# 
+#        For $(PROJ).EXE: List of dependencies for every object file
+# 
+$(FOLDER)$(PROJ).obj:      $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h
+
+$(FOLDER)$(PROJ)_b.obj:    $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h
+
+$(FOLDER)$(PROJ)_c.obj:    $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h
+
+$(FOLDER)$(PROJ)_f.obj:    $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h
+
+$(FOLDER)$(PROJ)_q.obj:    $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h
+
+$(FOLDER)$(PROJ)_v.obj:    $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h
+
+$(FOLDER)$(PROJ)_vi.obj:   $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h
+
+$(FOLDER)$(PROJ)_vii.obj:  $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h
+
+$(FOLDER)$(PROJ)_viii.obj: $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h
+
+$(FOLDER)$(PROJ)_x.obj:    $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h
+
+!IF ($(FLAG) == "64bit Version")        # For Win10
+$(FOLDER)$(PROJ)_des.obj:  $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h 
+$(FOLDER)desfast64.obj:    $(FOLDER)$(@B).asm
+
+$(FOLDER)$(PROJ)_tdes.obj: $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h 
+$(FOLDER)tdesfast64.obj:   $(FOLDER)$(@B).asm
+
+$(FOLDER)$(PROJ)_aes.obj:  $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h 
+$(FOLDER)aesfast64.obj:    $(FOLDER)$(@B).asm $(FOLDER)$(@B).inc
+
+!ELSE                                   # For Windows XP and WIN10
+$(FOLDER)$(PROJ)_des.obj:  $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h 
+$(FOLDER)desfast.obj:      $(FOLDER)$(@B).asm
+
+$(FOLDER)$(PROJ)_tdes.obj: $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h 
+$(FOLDER)tdesfast.obj:     $(FOLDER)$(@B).asm
+
+$(FOLDER)$(PROJ)_aes.obj:  $(FOLDER)$(@B).cpp $(FOLDER)$(PROJ)_cpp.h 
+$(FOLDER)aesfast.obj:      $(FOLDER)$(@B).asm $(FOLDER)$(@B).inc
+!ENDIF
+
+# Special build: Compiling only C++ modules (not using the fast ASM modules)
+# 
+#$(FOLDER)$(PROJ)_desquick.obj: $(FOLDER)$(PROJ)_des.cpp $(FOLDER)$(PROJ)_cpp.h 
+#$(FOLDER)des.obj:              $(FOLDER)$(@B).cpp
+#$(FOLDER)$(PROJ)_aesquick.obj: $(FOLDER)$(PROJ)_aes.cpp $(FOLDER)$(PROJ)_cpp.h 
+#$(FOLDER)aes.obj:              $(FOLDER)$(@B).cpp $(FOLDER)$(@B).h
+
+#------------------------------------------------------------------------------
+#
+#                       $(PROJ) Target build
+#
+$(FOLDER)$(PROJ).exe:   $(OBJECTS)
+#       LINK $(LFLAGS)  /OUT:$@ $(OBJECTS) >$(FOLDER)$(@B).link
+#
+#
+# Detect if "HEDIT.exe" is running. It must be terminated before rebuild.
+# ":" should appear in TASKLIST output only if the task is NOT found,
+# Hence FIND will set the ERRORLEVEL to 0 for 'not found' and 1 for 'found'.
+#
+!IF ([tasklist /NH /FI "IMAGENAME eq $(PROJ).exe" | FIND ":" > nul] == 1)
+        -TASKKILL /F /IM $(@B).exe > nul
+!ENDIF
+# Check in Nmake-file if the cl compiler version is 16.
+# Note that cl /? prints the version information to the standard error stream
+#  and the help text to the standard output.
+#  To be able to check the version with the findstr command one must first
+#  redirect stderr to stdout using 2>&1.
+# 
+!IF ([cl 2>&1 | findstr /C:"Version 16" > nul] == 0)
+        @ECHO Build: $(@F:64=), $(PROJ).exe - Windows XP and Win10 Compatible $(FLAG)
+        LINK $(LFLAGS)  /OUT:$(FOLDER)$(@B)_XP.exe $(OBJECTS) >$(FOLDER)$(@B)_XP.link
+        copy /Y $(FOLDER)$(@B)_XP.exe $(FOLDER)AES.exe
+        copy /Y $(FOLDER)$(@B)_XP.exe $(FOLDER)DES.exe   
+        copy /Y $(FOLDER)$(@B)_XP.exe $(FOLDER)TDES.exe   
+        copy /Y $(FOLDER)$(@B)_XP.exe $@   
+##! IFDEF SETVERSION
+##      Cscript //nologo $(FOLDER)SetVersion.vbs        32
+##! ENDIF
+        @ECHO.
+!ELSE
+        @ECHO Build: $(@F) - Windows 10 only $(FLAG)
+        LINK $(LFLAGS)  /OUT:$(FOLDER)$(@B)64.exe $(OBJECTS) >$(FOLDER)$(@B)64.link
+#       copy /Y $(FOLDER)$(@B)64.exe $(FOLDER)AES64.exe       
+#       copy /Y $(FOLDER)$(@B)64.exe $(FOLDER)DES64.exe
+#       copy /Y $(FOLDER)$(@B)64.exe $(FOLDER)TDES64.exe
+##! IFDEF SETVERSION
+##      Cscript //nologo $(FOLDER)SetVersion.vbs        64
+##! ENDIF
+        @ECHO.
+!ENDIF
+
+#------------------------------------------------------------------------------
+#
+#               $(PROJ)Quick Target build
+#
+$(FOLDER)$(PROJ)_desQuick.obj:  $(FOLDER)$(PROJ)_des.cpp
+        @ECHO Build: $(@F) - $(FLAG)
+        @CL /DDES_AES_QUICK $(CFLAGS) /Fo$@ $(FOLDER)$(PROJ)_des.cpp
+
+$(FOLDER)des.obj:       $(FOLDER)des.cpp
+        @CL $(CFLAGS) /Fo$@ $(FOLDER)des.cpp
+
+$(FOLDER)$(PROJ)_aesQuick.obj:  $(FOLDER)$(PROJ)_aes.cpp
+        @ECHO Build: $(@F) - $(FLAG)
+        @CL /DDES_AES_QUICK $(CFLAGS) /Fo$@ $(FOLDER)$(PROJ)_aes.cpp
+
+$(FOLDER)aes.obj:       $(FOLDER)aes.cpp $(FOLDER)aes.h
+        @CL $(CFLAGS) /Fo$@ $(FOLDER)aes.cpp
+
+$(FOLDER)$(PROJ)Quick.exe:    $(OBJECTSQUICK)
+#
+# Detect if "HEDITQuick64.exe" is running. It must be terminated before rebuild.
+# ":" should appear in TASKLIST output only if the task is NOT found,
+# Hence FIND will set the ERRORLEVEL to 0 for 'not found' and 1 for 'found'.
+#
+!IF ([tasklist /NH /FI "IMAGENAME eq $(PROJ)Quick64.exe" | FIND ":" > nul] == 1)
+        -TASKKILL /F /IM $(@B).exe > nul
+!ENDIF
+!IF ($(FLAG) == "32bit XP Version")     # For XP and Win10
+        @ECHO Building: $(@F:.exe=_XP).exe - Windows XP and Win10 Compatible $(FLAG)
+        @ECHO.
+        LINK $(LFLAGS)  /OUT:$(FOLDER)$(@B)_XP.exe $** $(LIBS) >$(FOLDER)$(@B)_XP.link
+##! IFDEF SETVERSION
+##      Cscript //nologo $(FOLDER)SetVersion.vbs        32Q
+##! ENDIF
+!ELSE                                   # For Win10 only
+        @ECHO Build: $(@F:.exe=64).exe - Windows 10 only $(FLAG)
+        LINK $(LFLAGS)  /OUT:$(FOLDER)$(@B)64.exe $** $(LIBS) >$(FOLDER)$(@B)64.link
+##! IFDEF SETVERSION
+##      Cscript //nologo $(FOLDER)SetVersion.vbs        64Q
+##! ENDIF
+!ENDIF
+
+##      DEL $(CLEAN)
+
+        @ECHO.
+        @ECHO Build Complete: $(FOLDER)$(PROJ)*.EXE - $(FLAG)
+
+# -----------------------------  END OF MAKEFILE  -----------------------------
+
+
+
