@@ -1,6 +1,6 @@
 # haHedit
 
-DOS-Style Hex-Editor for windows capable of running crypto batches  
+DOS-Style Hex-Editor `HEDIT.EXE` for windows capable of running crypto batches  
 Note1: Filesize (edit) > 4Gbyte not supported.  
 ![screenshot](document/image/Hedit_01.jpg)  
 
